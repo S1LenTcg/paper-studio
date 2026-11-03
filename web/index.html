@@ -1,0 +1,1094 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+ <head>
+  <meta charset="utf-8"/>
+  <meta content="width=device-width, initial-scale=1" name="viewport"/>
+  <meta content="纸间，本地优先的公众号推文排版工作台。" name="description"/>
+  <title>
+   纸间 · Paper Studio
+  </title>
+  <link href="/styles.css" rel="stylesheet"/>
+  <link href="/standards.css" rel="stylesheet"/>
+  <script defer="" src="/ai.js">
+  </script>
+  <script defer="" src="/app.js">
+  </script>
+  <script defer="" src="/standards.js">
+  </script>
+ </head>
+ <body>
+  <a class="skip-link" href="#main-content">
+   跳到主要内容
+  </a>
+  <aside aria-label="主导航" class="sidebar">
+   <a aria-label="纸间首页" class="brand" href="#home">
+    <span class="brand-mark">
+     <svg aria-hidden="true" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.7" viewbox="0 0 24 24">
+      <path d="M6 3h9l4 4v14H6Zm8 0v5h5M9 12h7m-7 4h5">
+      </path>
+     </svg>
+    </span>
+    <span>
+     纸间
+    </span>
+   </a>
+   <button aria-current="page" class="nav active" id="nav-home">
+    <svg aria-hidden="true" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.7" viewbox="0 0 24 24">
+     <path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1Z">
+     </path>
+    </svg>
+    首页
+   </button>
+   <button class="nav" id="nav-editor">
+    <svg aria-hidden="true" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.7" viewbox="0 0 24 24">
+     <path d="M12 20H4V4h10M16 3l5 5-10 10-5 1 1-5Z">
+     </path>
+    </svg>
+    编辑器
+   </button>
+   <button class="nav" id="nav-drafts">
+    <svg aria-hidden="true" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.7" viewbox="0 0 24 24">
+     <path d="M8 3h8l4 4v14H4V3Zm8 0v5h4M8 12h8m-8 4h6">
+     </path>
+    </svg>
+    草稿
+    <b id="draft-count">
+     0
+    </b>
+   </button>
+   <button class="nav" id="nav-standards">
+    <svg aria-hidden="true" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.7" viewbox="0 0 24 24">
+     <rect height="17" rx="2" width="16" x="4" y="4">
+     </rect>
+     <path d="m8 12 3 3 5-6M9 4V2m6 2V2">
+     </path>
+    </svg>
+    规范检查
+   </button>
+   <div class="sidebar-bottom">
+    <a class="sidebar-link" href="/creative">
+     版式示例
+    </a>
+    <button class="text-button" id="about-button">
+     使用帮助
+    </button>
+    <span class="local-status">
+     <i>
+     </i>
+     本地工作区
+    </span>
+   </div>
+  </aside>
+  <main class="main" id="main-content" tabindex="-1">
+   <header class="topbar" hidden="">
+    <span id="breadcrumb">
+     工作空间
+     <i>
+      /
+     </i>
+     创作首页
+    </span>
+    <div>
+     <span class="local-badge">
+      <i class="status-dot">
+      </i>
+      草稿存于本机
+     </span>
+    </div>
+   </header>
+   <section class="view home-view" id="home-view">
+    <div class="home-title">
+     <div class="hero-copy">
+      <h1>
+       文章
+      </h1>
+      <button class="primary" id="continue-draft">
+       继续编辑
+      </button>
+     </div>
+     <button class="secondary sample-peek" id="open-sample">
+      查看示例
+     </button>
+    </div>
+    <div class="section-title">
+     <h2>
+      新建
+     </h2>
+    </div>
+    <div class="entry-grid">
+     <button class="entry entry-template" id="entry-template">
+      <span class="entry-icon">
+       <svg aria-hidden="true" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.7" viewbox="0 0 24 24">
+        <path d="M12 20H4V4h10M16 3l5 5-10 10-5 1 1-5Z">
+        </path>
+       </svg>
+      </span>
+      <span class="entry-body">
+       <strong>
+        手动排版
+       </strong>
+       <small>
+        从空白文章开始
+       </small>
+      </span>
+      <span class="entry-arrow">
+       <svg aria-hidden="true" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.7" viewbox="0 0 24 24">
+        <path d="M5 12h14m-6-6 6 6-6 6">
+        </path>
+       </svg>
+      </span>
+     </button>
+     <button class="entry" id="entry-ai">
+      <span class="entry-icon">
+       <svg aria-hidden="true" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.7" viewbox="0 0 24 24">
+        <path d="m12 3 2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5ZM20 2v4m-2-2h4">
+        </path>
+       </svg>
+      </span>
+      <span class="entry-body">
+       <strong>
+        AI 排版
+       </strong>
+       <small>
+        描述要求，生成排版
+       </small>
+      </span>
+      <span class="entry-arrow">
+       <svg aria-hidden="true" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.7" viewbox="0 0 24 24">
+        <path d="M5 12h14m-6-6 6 6-6 6">
+        </path>
+       </svg>
+      </span>
+     </button>
+     <button class="entry" id="entry-reference">
+      <span class="entry-icon">
+       <svg aria-hidden="true" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.7" viewbox="0 0 24 24">
+        <rect height="15" rx="2" width="12" x="3" y="4">
+        </rect>
+        <path d="M9 8h12v14H9M6 8h5m-5 4h3">
+        </path>
+       </svg>
+      </span>
+      <span class="entry-body">
+       <strong>
+        参考排版
+       </strong>
+       <small>
+        使用推文链接作为参考
+       </small>
+      </span>
+      <span class="entry-arrow">
+       <svg aria-hidden="true" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.7" viewbox="0 0 24 24">
+        <path d="M5 12h14m-6-6 6 6-6 6">
+        </path>
+       </svg>
+      </span>
+     </button>
+     <button class="entry" id="home-standards">
+      <span class="entry-icon">
+       <svg aria-hidden="true" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.7" viewbox="0 0 24 24">
+        <rect height="17" rx="2" width="16" x="4" y="4">
+        </rect>
+        <path d="m8 12 3 3 5-6M9 4V2m6 2V2">
+        </path>
+       </svg>
+      </span>
+      <span class="entry-body">
+       <strong>
+        规范检查
+       </strong>
+       <small>
+        检查秀米草稿的文字格式
+       </small>
+      </span>
+      <span class="entry-arrow">
+       <svg aria-hidden="true" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.7" viewbox="0 0 24 24">
+        <path d="M5 12h14m-6-6 6 6-6 6">
+        </path>
+       </svg>
+      </span>
+     </button>
+    </div>
+    <div class="section-title">
+     <h2>
+      最近的草稿
+     </h2>
+     <button class="text-button" id="all-drafts">
+      全部草稿
+     </button>
+     <button class="text-button" id="home-bridge">
+      导出当前文章
+     </button>
+    </div>
+    <div class="draft-list" id="recent-drafts">
+     <p class="muted">
+      正在读取本机草稿…
+     </p>
+    </div>
+   </section>
+   <section class="view editor-view" hidden="" id="editor-view">
+    <div class="editor-heading">
+     <div>
+      <h1>
+       编辑器
+      </h1>
+      <span class="page-kicker" id="template-description">
+       人物特写 · 采访、人物、活动后记
+      </span>
+     </div>
+     <div class="toolbar">
+      <span id="save-state" role="status">
+       未保存
+      </span>
+      <button class="secondary" id="ai-editor-button">
+       AI 排版
+      </button>
+      <button class="secondary" id="save-button">
+       保存
+      </button>
+      <button class="primary" id="export-button">
+       导出
+      </button>
+      <details class="editor-more">
+       <summary>
+        更多
+       </summary>
+       <div class="editor-more-menu">
+        <button class="secondary" id="reference-editor-button">
+         参考排版
+        </button>
+        <button class="secondary" id="compare-button">
+         版式对比
+        </button>
+        <button class="secondary" id="import-button">
+         导入文稿
+        </button>
+        <input accept=".txt,.md,.json" hidden="" id="import-file" type="file"/>
+       </div>
+      </details>
+     </div>
+    </div>
+    <div aria-label="切换编辑与预览" class="workspace-switch" role="group">
+     <button aria-pressed="true" data-workspace-pane="edit">
+      编辑
+     </button>
+     <button aria-pressed="false" data-workspace-pane="preview">
+      预览
+     </button>
+    </div>
+    <div class="editor-grid" data-panel="blocks" data-workspace-pane="edit">
+     <div class="editor-inspector">
+      <div class="editor-title-field">
+       <label class="visually-hidden" for="title-input">
+        文章标题
+       </label>
+       <textarea id="title-input" maxlength="160" placeholder="文章标题" rows="2"></textarea>
+      </div>
+      <div aria-label="切换编辑面板" class="editor-panel-tabs" role="group">
+       <button aria-pressed="true" data-editor-panel="blocks">
+        内容
+       </button>
+       <button aria-pressed="false" data-editor-panel="settings">
+        样式
+       </button>
+      </div>
+      <aside class="settings-panel panel">
+       <details class="quiet-details article-meta">
+        <summary>
+         导语与署名
+        </summary>
+        <label for="column-input">
+         栏目名
+         <span class="optional">
+          可留空
+         </span>
+        </label>
+        <input id="column-input" maxlength="60"/>
+        <label for="subtitle-input">
+         导语 / 副标题
+        </label>
+        <textarea id="subtitle-input" maxlength="500" rows="2"></textarea>
+        <label for="author-input">
+         作者署名
+        </label>
+        <input id="author-input" maxlength="100"/>
+       </details>
+       <div class="setting-divider">
+       </div>
+       <div class="reference-current" hidden="" id="reference-current">
+        <strong>
+         正在使用参考样式
+        </strong>
+        <span id="reference-current-title">
+        </span>
+        <button class="text-button" id="change-reference">
+         换一篇参考 →
+        </button>
+       </div>
+       <label>
+        选择版式
+       </label>
+       <div class="theme-list" id="themes">
+       </div>
+       <div class="setting-divider">
+       </div>
+       <div class="range-heading">
+        <label for="font-input">
+         正文字号
+        </label>
+        <output id="font-value">
+         15 px
+        </output>
+       </div>
+       <input id="font-input" max="22" min="12" step="1" type="range"/>
+       <div class="range-heading">
+        <label for="line-input">
+         正文行距
+        </label>
+        <output id="line-value">
+         1.95
+        </output>
+       </div>
+       <input id="line-input" max="2.5" min="1.4" step="0.05" type="range"/>
+       <div id="spacing-setting">
+        <div class="range-heading">
+         <label for="spacing-input">
+          段落间距
+         </label>
+         <output id="spacing-value">
+          0.65
+         </output>
+        </div>
+        <input id="spacing-input" max="1.5" min="0.4" step="0.05" type="range"/>
+       </div>
+       <button class="text-button" id="undo-button">
+        ↶ 撤销上一步
+       </button>
+      </aside>
+      <aside class="blocks-panel panel">
+       <div class="panel-title">
+        文章内容
+        <span id="block-count">
+         0
+        </span>
+       </div>
+       <div class="block-tools">
+        <select aria-label="新区块类型" id="new-block-type">
+         <option value="paragraph">
+          正文
+         </option>
+         <option value="heading">
+          小标题
+         </option>
+         <option value="quote">
+          引用
+         </option>
+         <option value="image">
+          图片
+         </option>
+         <option value="divider">
+          分隔
+         </option>
+         <option value="signature">
+          署名
+         </option>
+        </select>
+        <button class="secondary small" id="add-block">
+         ＋ 添加
+        </button>
+       </div>
+       <div class="block-list" id="block-list">
+       </div>
+       <div class="block-editor" id="block-editor">
+       </div>
+      </aside>
+     </div>
+     <section class="preview-panel">
+      <div class="preview-bar">
+       <span>
+        预览
+       </span>
+       <div class="width-buttons">
+        <button class="selected" data-width="390">
+         手机
+        </button>
+        <button data-width="677">
+         宽屏
+        </button>
+       </div>
+       <span id="word-count">
+        0 字
+       </span>
+      </div>
+      <div class="preview-scroll">
+       <iframe id="article-preview" sandbox="allow-same-origin" title="文章排版预览">
+       </iframe>
+      </div>
+     </section>
+    </div>
+   </section>
+   <section class="view drafts-view" hidden="" id="drafts-view">
+    <div class="draft-heading">
+     <h1>
+      我的草稿
+      <span id="draft-total">
+      </span>
+     </h1>
+     <button class="primary" id="new-draft">
+      新建文章
+     </button>
+    </div>
+    <div class="draft-filter">
+     <label class="draft-search">
+      <span aria-hidden="true">
+       ⌕
+      </span>
+      <input aria-label="搜索草稿标题" id="draft-search" placeholder="搜索草稿标题…" type="search"/>
+     </label>
+    </div>
+    <div class="draft-list" id="all-draft-list">
+    </div>
+   </section>
+  </main>
+  <dialog aria-labelledby="export-dialog-title" id="export-dialog">
+   <div class="dialog-top">
+    <span class="page-kicker">
+     当前文章
+    </span>
+    <button aria-label="关闭导出窗口" class="icon-button" data-close="">
+     ×
+    </button>
+   </div>
+   <h2 id="export-dialog-title">
+    导出与发送
+   </h2>
+   <div class="export-options">
+    <button class="export-option" id="download-html">
+     <span>
+      ↧
+     </span>
+     <div>
+      <b>
+       排版 HTML
+      </b>
+      <small>
+       含图片，可离线打开
+      </small>
+     </div>
+     <em>
+      →
+     </em>
+    </button>
+    <button class="export-option" id="download-json">
+     <span>
+      ▱
+     </span>
+     <div>
+      <b>
+       文稿备份
+      </b>
+      <small>
+       JSON 格式，可重新导入
+      </small>
+     </div>
+     <em>
+      →
+     </em>
+    </button>
+    <details class="quiet-details">
+     <summary>
+      其他导出方式
+     </summary>
+     <button class="export-option" id="copy-html">
+      <span>
+       ▤
+      </span>
+      <div>
+       <b>
+        复制 HTML
+       </b>
+      </div>
+      <em>
+       →
+      </em>
+     </button>
+    </details>
+   </div>
+   <div class="xiumi-box">
+    <div class="xiumi-title">
+     <b>
+      发送到秀米
+     </b>
+     <span>
+      实验接入
+     </span>
+    </div>
+    <p id="bridge-message">
+     正在检查本地适配器…
+    </p>
+    <details class="quiet-details">
+     <summary>
+      窗口与登录设置
+     </summary>
+     <div class="xiumi-browser-options">
+      <label>
+       <input id="xiumi-remember-login" type="checkbox"/>
+       记住本机登录
+      </label>
+      <label>
+       <input checked="" id="xiumi-leave-open" type="checkbox"/>
+       完成后保留秀米窗口
+      </label>
+      <p>
+       再次使用前，关闭上一次的秀米窗口。
+      </p>
+     </div>
+    </details>
+    <button class="primary full" id="send-xiumi">
+     发送到秀米新草稿 ↗
+    </button>
+    <div class="xiumi-task-actions">
+     <button class="text-button" id="xiumi-refresh-jobs">
+      刷新发送记录
+     </button>
+     <button class="text-button" hidden="" id="xiumi-new-task">
+      已查看上次结果，准备新任务
+     </button>
+    </div>
+    <div hidden="" id="job-progress">
+     <p class="small-print" id="job-title">
+     </p>
+     <ol id="job-steps">
+      <li data-stage="opening">
+       打开编辑器
+      </li>
+      <li data-stage="waiting_login">
+       手动登录
+      </li>
+      <li data-stage="writing">
+       写入内容
+      </li>
+      <li data-stage="preflight">
+       保存前检查
+      </li>
+      <li data-stage="saving">
+       保存草稿
+      </li>
+      <li data-stage="verifying">
+       重新打开核对
+      </li>
+     </ol>
+     <p id="job-message" role="status">
+     </p>
+     <p class="xiumi-login-help" hidden="" id="xiumi-login-help">
+     </p>
+     <div class="job-actions">
+      <a class="text-button" hidden="" id="draft-link" rel="noopener noreferrer" target="_blank">
+       打开秀米测试稿 ↗
+      </a>
+      <button class="text-button" hidden="" id="cancel-job">
+       取消等待
+      </button>
+     </div>
+     <div id="verification-summary">
+     </div>
+    </div>
+    <div hidden="" id="xiumi-history">
+     <h3>
+      最近发送记录
+     </h3>
+     <div id="xiumi-history-list">
+     </div>
+    </div>
+   </div>
+  </dialog>
+  <dialog aria-labelledby="comparison-dialog-title" id="comparison-dialog">
+   <div class="dialog-top">
+    <div>
+     <h2 id="comparison-dialog-title">
+      版式对比
+     </h2>
+    </div>
+    <button aria-label="关闭版式对比" class="icon-button" data-close="">
+     ×
+    </button>
+   </div>
+   <div id="comparison-grid">
+   </div>
+  </dialog>
+  <dialog aria-labelledby="reference-dialog-title" id="reference-dialog">
+   <div class="dialog-top">
+    <div>
+     <h2 id="reference-dialog-title">
+      参考排版
+     </h2>
+    </div>
+    <button aria-label="关闭参考排版" class="icon-button" data-close="">
+     ×
+    </button>
+   </div>
+   <div class="reference-grid">
+    <div class="reference-controls">
+     <form id="reference-form">
+      <label for="reference-url">
+       参考文章链接
+      </label>
+      <div class="reference-url-row">
+       <input id="reference-url" placeholder="https://mp.weixin.qq.com/s/…" required="" type="url"/>
+       <button class="primary" id="read-reference" type="submit">
+        读取
+       </button>
+      </div>
+     </form>
+     <p id="reference-status" role="status">
+     </p>
+     <details class="quiet-details">
+      <summary>
+       其他参考方式
+      </summary>
+      <div class="reference-fallback">
+       <button class="secondary small" id="reference-html-button">
+        导入 HTML
+       </button>
+       <input accept=".html,.htm,.txt" hidden="" id="reference-html-file" type="file"/>
+       <button class="text-button" id="reference-image-button">
+        截图对照
+       </button>
+       <input accept="image/png,image/jpeg,image/webp" hidden="" id="reference-image-file" type="file"/>
+      </div>
+     </details>
+     <div hidden="" id="reference-board">
+      <img alt="用户上传的参考截图" id="reference-board-image"/>
+      <p class="reference-help">
+       截图仅供对照，不自动识别排版。
+      </p>
+     </div>
+     <div hidden="" id="reference-result">
+      <h3 id="reference-title">
+      </h3>
+      <a hidden="" id="reference-source" rel="noopener noreferrer" target="_blank">
+       打开原文章 ↗
+      </a>
+      <label for="reference-presentation">
+       排版方式
+      </label>
+      <select id="reference-presentation">
+       <option value="reference">
+        保留原文布局
+       </option>
+       <option value="doocs-classic">
+        用开源经典整理 · doocs/md
+       </option>
+       <option value="doocs-simple">
+        用开源简洁整理 · doocs/md
+       </option>
+       <option value="doocs-grace">
+        用开源优雅整理 · doocs/md
+       </option>
+      </select>
+      <details class="reference-details">
+       <summary>
+        查看参考细节
+       </summary>
+       <p id="reference-stats">
+       </p>
+       <div id="reference-palette">
+       </div>
+       <div class="reference-structure-summary" id="reference-structure-summary">
+       </div>
+       <dl id="reference-spec">
+       </dl>
+       <ul id="reference-warnings">
+       </ul>
+      </details>
+      <label for="reference-own-text">
+       文章内容
+      </label>
+      <textarea id="reference-own-text" placeholder="留空使用当前文章。" rows="6"></textarea>
+      <div id="reference-title-setting">
+       <label class="reference-option">
+        <input id="reference-show-title" type="checkbox"/>
+        在正文中添加标题
+       </label>
+      </div>
+      <button class="secondary full" id="reference-refresh">
+       更新试排
+      </button>
+      <button class="primary full" id="apply-reference">
+       另存为新稿
+      </button>
+     </div>
+     <details class="quiet-details">
+      <summary>
+       最近参考
+      </summary>
+      <div id="reference-history">
+       <div id="reference-history-list">
+       </div>
+      </div>
+     </details>
+    </div>
+    <section class="reference-preview">
+     <div class="reference-preview-bar">
+      <span>
+       布局对照
+      </span>
+      <div class="reference-preview-tabs">
+       <button aria-pressed="true" id="reference-tab-own">
+        我的试排
+       </button>
+       <button aria-pressed="false" id="reference-tab-source">
+        原文结构
+       </button>
+       <button aria-pressed="false" id="reference-tab-compare">
+        并排对照
+       </button>
+      </div>
+     </div>
+     <div class="reference-preview-scroll">
+      <div id="reference-preview-empty">
+       读取参考后显示预览
+      </div>
+      <div id="reference-layout-canvases">
+       <section class="reference-canvas" id="reference-own-canvas">
+        <h4>
+         我的文稿
+        </h4>
+        <div class="reference-page">
+         <iframe hidden="" id="reference-preview-frame" sandbox="allow-same-origin" title="参考样式试排预览">
+         </iframe>
+        </div>
+       </section>
+       <section class="reference-canvas" hidden="" id="reference-source-canvas">
+        <h4>
+         原文结构 · 图片为占位
+        </h4>
+        <div class="reference-page">
+         <iframe id="reference-source-frame" sandbox="allow-same-origin" title="原文结构对照">
+         </iframe>
+        </div>
+       </section>
+      </div>
+     </div>
+    </section>
+   </div>
+  </dialog>
+  <dialog aria-labelledby="ai-dialog-title" id="ai-dialog">
+   <div class="dialog-top">
+    <div>
+     <h2 id="ai-dialog-title">
+      AI 排版
+     </h2>
+    </div>
+    <button aria-label="关闭 AI 排版" class="icon-button" data-close="">
+     ×
+    </button>
+   </div>
+   <div class="ai-grid">
+    <section class="ai-controls">
+     <details id="ai-configuration">
+      <summary>
+       模型配置
+       <span id="ai-config-state">
+        尚未配置模型
+       </span>
+      </summary>
+      <label for="ai-base-url">
+       API 地址
+      </label>
+      <input autocomplete="off" id="ai-base-url" placeholder="https://api.openai.com/v1" type="url"/>
+      <label for="ai-model">
+       模型名
+      </label>
+      <input autocomplete="off" id="ai-model" maxlength="160" placeholder="填写这家服务支持的模型名"/>
+      <label for="ai-key">
+       API Key
+      </label>
+      <input autocomplete="off" id="ai-key" placeholder="填写 API Key" type="password"/>
+      <p class="ai-small">
+       文稿和图片说明将发送到所配置的模型。密钥仅本次服务有效。
+      </p>
+      <details class="ai-advanced">
+       <summary>
+        兼容选项
+       </summary>
+       <label for="ai-token-field">
+        输出上限参数
+       </label>
+       <select id="ai-token-field">
+        <option value="max_completion_tokens">
+         max_completion_tokens
+        </option>
+        <option value="max_tokens">
+         max_tokens（部分兼容服务）
+        </option>
+       </select>
+       <label class="ai-check">
+        <input checked="" id="ai-json-mode" type="checkbox"/>
+        请求 JSON 输出模式
+       </label>
+       <p class="ai-small">
+        需使用支持 JSON 输出的 Chat Completions 兼容接口。
+       </p>
+      </details>
+      <div class="ai-config-actions">
+       <button class="secondary" id="ai-save-config">
+        使用本次配置
+       </button>
+       <button class="text-button" id="ai-clear-key">
+        清除本次密钥
+       </button>
+      </div>
+     </details>
+     <label for="ai-own-text">
+      文章内容
+     </label>
+     <p class="ai-small" id="ai-current-source">
+     </p>
+     <textarea id="ai-own-text" maxlength="14000" placeholder="留空使用当前文章。也可以在这里粘贴新文稿。" rows="5"></textarea>
+     <label for="ai-requirement">
+      排版要求
+     </label>
+     <div id="ai-presets">
+      <button data-prompt="这是一篇人物采访，想要一点杂志感。标题克制，突出原文中已有的引语，正文疏密有节奏，少用色块。保留全部原文与图片。">
+       人物采访
+      </button>
+      <button data-prompt="排成清楚利落的校园新闻：层级明确，正文紧凑易读，图片自然嵌入，不要给每段加卡片。保留全部原文与图片。">
+       校园新闻
+      </button>
+      <button data-prompt="希望像一篇安静的摄影手记：宋体正文、居中的轻标题、适度留白，照片用相纸留边。保留全部原文与图片。">
+       摄影手记
+      </button>
+     </div>
+     <textarea id="ai-requirement" maxlength="1000" placeholder="比如：采访专刊，少用色块，引语突出一点，正文不要太拥挤。" rows="4"></textarea>
+     <button class="primary full" id="ai-generate">
+      生成排版方案
+     </button>
+     <p id="ai-status" role="status">
+     </p>
+     <button class="text-button" hidden="" id="ai-restore">
+      恢复上次任务
+     </button>
+     <section hidden="" id="ai-result">
+      <h3 id="ai-result-title">
+      </h3>
+      <p id="ai-checks">
+      </p>
+      <ul id="ai-notes">
+      </ul>
+      <p class="ai-small" id="ai-model-used">
+      </p>
+      <label for="ai-feedback">
+       这一版还想改哪里？
+      </label>
+      <textarea id="ai-feedback" maxlength="400" placeholder="比如：小标题靠左，引用不要底色，段落再紧凑一点。" rows="3"></textarea>
+      <div class="ai-refine-actions">
+       <button class="secondary" id="ai-refine">
+        继续调整
+       </button>
+       <button class="text-button" disabled="" id="ai-back">
+        上一方案
+       </button>
+      </div>
+      <button class="primary full" disabled="" id="ai-apply">
+       另存为新稿
+      </button>
+     </section>
+    </section>
+    <section class="ai-preview">
+     <div class="reference-preview-bar">
+      <span>
+       可编辑排版方案
+      </span>
+      <div class="reference-preview-tabs">
+       <button aria-pressed="true" id="ai-tab-own">
+        本轮方案
+       </button>
+       <button aria-pressed="false" id="ai-tab-compare">
+        调整前后
+       </button>
+      </div>
+     </div>
+     <div class="ai-preview-scroll">
+      <div id="ai-preview-empty">
+       生成后在这里预览
+      </div>
+      <div hidden="" id="ai-preview-canvases">
+       <section class="ai-canvas" hidden="" id="ai-before-canvas">
+        <h4>
+         本轮调整前 ·
+         <span id="ai-original-title">
+         </span>
+        </h4>
+        <div class="reference-page">
+         <iframe id="ai-before-frame" sandbox="allow-same-origin" title="AI 调整前预览">
+         </iframe>
+        </div>
+       </section>
+       <section class="ai-canvas">
+        <h4>
+         本轮方案
+        </h4>
+        <div class="reference-page">
+         <iframe id="ai-after-frame" sandbox="allow-same-origin" title="AI 排版方案预览">
+         </iframe>
+        </div>
+       </section>
+      </div>
+     </div>
+    </section>
+   </div>
+  </dialog>
+  <dialog aria-labelledby="info-title" id="info-dialog">
+   <div class="dialog-top">
+    <span class="page-kicker">
+     纸间
+    </span>
+    <button aria-label="关闭说明" class="icon-button" data-close="">
+     ×
+    </button>
+   </div>
+   <h2 id="info-title">
+   </h2>
+   <div id="info-content">
+   </div>
+  </dialog>
+  <dialog aria-labelledby="standards-title" id="standards-dialog">
+   <div class="dialog-top">
+    <div>
+     <h2 id="standards-title">
+      规范检查
+     </h2>
+    </div>
+    <button aria-label="关闭规范检查" class="icon-button" data-close="">
+     ×
+    </button>
+   </div>
+   <div class="standards-layout">
+    <section class="standards-controls">
+     <form id="standards-form">
+      <label for="standards-url">
+       秀米草稿编辑链接
+      </label>
+      <input id="standards-url" maxlength="600" placeholder="https://xiumi.us/studio/v5#/paper/for/…" required="" type="url"/>
+      <p class="small-print">
+       首次使用需在新窗口登录。
+      </p>
+      <label class="standards-check">
+       <input id="standards-remember" type="checkbox"/>
+       记住本机登录
+      </label>
+      <button class="primary full" id="standards-start">
+       开始检查
+      </button>
+     </form>
+     <details class="standards-rules">
+      <summary>
+       查看检查规范
+      </summary>
+      <p>
+       正文：14号、默认字体、左对齐、行距1.8、字距1、首行缩进；左右边距15–30。
+      </p>
+      <p>
+       小尾巴：14号、右对齐、行距1.5、默认字距、#A0A0A0，放在正文卡片外。
+      </p>
+      <p class="small-print">
+       边距、标点与卡片位置需人工复核。
+      </p>
+     </details>
+     <div aria-live="polite" id="standards-status" role="status">
+     </div>
+     <div class="standards-actions">
+      <button class="text-button" hidden="" id="standards-cancel">
+       结束本次检查
+      </button>
+      <a class="text-button" hidden="" id="standards-copy" rel="noopener noreferrer" target="_blank">
+       打开校正副本 ↗
+      </a>
+     </div>
+     <details class="quiet-details">
+      <summary>
+       检查记录
+      </summary>
+      <section id="standards-history">
+       <div id="standards-history-list">
+       </div>
+       <button class="text-button" id="standards-refresh">
+        刷新记录
+       </button>
+      </section>
+     </details>
+    </section>
+    <section class="standards-results">
+     <div id="standards-empty">
+      粘贴草稿链接，查看检查结果
+     </div>
+     <div hidden="" id="standards-report">
+      <div class="standards-report-head">
+       <span class="page-kicker">
+        检查结果
+       </span>
+       <h3 id="standards-article-title">
+       </h3>
+       <p id="standards-summary">
+       </p>
+      </div>
+      <div class="standards-report-tools">
+       <label for="standards-body-color">
+        正文类型
+       </label>
+       <select id="standards-body-color">
+        <option value="#565656">
+         普通正文 · #565656
+        </option>
+        <option value="#414141">
+         正式通知 · #414141
+        </option>
+       </select>
+       <button class="secondary small" id="standards-recheck">
+        重新检查
+       </button>
+      </div>
+      <p class="small-print">
+       修改分类后，需重新检查。
+      </p>
+      <div aria-label="筛选检查区块" class="standards-filters" role="group">
+       <button aria-pressed="true" data-norm-filter="issues" type="button">
+        待处理
+       </button>
+       <button aria-pressed="false" data-norm-filter="all" type="button">
+        全部区块
+       </button>
+      </div>
+      <details class="quiet-details" hidden="" id="standards-manual">
+       <summary id="standards-manual-title">
+        人工复核
+       </summary>
+       <ul id="standards-manual-list">
+       </ul>
+      </details>
+      <p hidden="" id="standards-no-issues">
+       没有待处理的自动修正项。
+      </p>
+      <div id="standards-blocks">
+      </div>
+      <div class="standards-apply-bar">
+       <label class="standards-check">
+        <input checked="" id="standards-select-all" type="checkbox"/>
+        全选修正项
+       </label>
+       <button class="primary" id="standards-apply">
+        修正副本
+       </button>
+       <p class="small-print">
+        只修改新副本，保留原稿。
+       </p>
+      </div>
+     </div>
+    </section>
+   </div>
+  </dialog>
+  <div class="toast" hidden="" id="toast" role="status">
+  </div>
+ </body>
+</html>

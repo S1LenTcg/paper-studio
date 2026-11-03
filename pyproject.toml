@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "paper-studio"
+version = "0.8.0"
+description = "本地推文排版与秀米接入验证工作台"
+readme = "README.md"
+license = {file = "LICENSE"}
+authors = [{name = "S1LenTcg"}]
+requires-python = ">=3.11"
+dependencies = ["beautifulsoup4>=4.12,<5"]
+
+[project.optional-dependencies]
+xiumi = ["selenium>=4.20,<5"]
+
+[project.urls]
+Repository = "https://github.com/S1LenTcg/paper-studio"
+Issues = "https://github.com/S1LenTcg/paper-studio/issues"
+
+[project.scripts]
+paper-studio = "paperstudio.server:main"
+
+[tool.setuptools]
+packages = ["paperstudio", "paperstudio_web"]
+package-dir = {paperstudio_web = "web"}
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
+
+[tool.setuptools.package-data]
+paperstudio = ["vendor/doocs-md/*.css", "vendor/doocs-md/LICENSE", "vendor/doocs-md/sources.json"]
+paperstudio_web = ["*.html", "*.css", "*.js", "*.png", "*.jpg"]

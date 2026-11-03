@@ -1,0 +1,32 @@
+{
+  "repository": "https://github.com/doocs/md",
+  "retrieved": "2026-10-29",
+  "license": "WTFPL-2.0",
+  "files": [
+    {
+      "path": "LICENSE",
+      "sha": "93c99b0db52d5364b4e97797d338cdc826fabdf3",
+      "url": "https://github.com/doocs/md/blob/main/LICENSE"
+    },
+    {
+      "path": "packages/shared/src/configs/theme-css/base.css",
+      "sha": "5c44e5cf6af1b4c5d27962d13019cea1050238f1",
+      "url": "https://github.com/doocs/md/blob/main/packages/shared/src/configs/theme-css/base.css"
+    },
+    {
+      "path": "packages/shared/src/configs/theme-css/default.css",
+      "sha": "d846767f985cbdfc289d9feadc9663850f5f25cc",
+      "url": "https://github.com/doocs/md/blob/main/packages/shared/src/configs/theme-css/default.css"
+    },
+    {
+      "path": "packages/shared/src/configs/theme-css/simple.css",
+      "sha": "f96ba41c2a236bf0b0220a5230b4b70aef4acc0d",
+      "url": "https://github.com/doocs/md/blob/main/packages/shared/src/configs/theme-css/simple.css"
+    },
+    {
+      "path": "packages/shared/src/configs/theme-css/grace.css",
+      "sha": "a31014326777478c91b5bd5219e42cc7f64b58de",
+      "url": "https://github.com/doocs/md/blob/main/packages/shared/src/configs/theme-css/grace.css"
+    }
+  ]
+}

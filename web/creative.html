@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width,initial-scale=1" name="viewport"/>
+<title>三个更大胆的方向 · 纸间</title>
+<link href="/creative.css" rel="stylesheet"/>
+<script defer="" src="/creative.js"></script>
+</head>
+<body>
+<header class="lab-header"><a href="/">← 回排版工作台</a><span>纸间 / 版式试验场</span><span class="draft-label">设计小样</span></header>
+<main>
+<div class="intro"><div><h1>版式试验场</h1><p class="intro-note">三种版式，展开查看。</p></div><p class="scope-note">设计小样，暂不支持编辑或导出。</p></div>
+<div class="directions">
+<section class="direction" data-direction="poster"><div class="direction-title"><span class="swatch blue"></span><div><h2>海报开场</h2><p>字压在照片上，先把人拉进现场。</p></div><button aria-label="展开海报开场" class="expand" data-expand="poster">展开 ↗</button></div><div aria-label="海报开场可滚动预览" class="sample-window" id="poster-window" tabindex="0"><p class="loading">正在铺开版面…</p></div></section>
+<section class="direction" data-direction="notebook"><div class="direction-title"><span class="swatch amber"></span><div><h2>现场手记</h2><p>像采写结束后，留下的那几页笔记。</p></div><button aria-label="展开现场手记" class="expand" data-expand="notebook">展开 ↗</button></div><div aria-label="现场手记可滚动预览" class="sample-window" id="notebook-window" tabindex="0"><p class="loading">正在铺开版面…</p></div></section>
+<section class="direction" data-direction="interview"><div class="direction-title"><span class="swatch red"></span><div><h2>采访专刊</h2><p>竖题、裁切和边栏，做成一期小刊物。</p></div><button aria-label="展开采访专刊" class="expand" data-expand="interview">展开 ↗</button></div><div aria-label="采访专刊可滚动预览" class="sample-window" id="interview-window" tabindex="0"><p class="loading">正在铺开版面…</p></div></section>
+</div>
+<p class="bottom-note">示例文字与人物为虚构；三份均使用同一份文稿和同一张示意照片。配图来源见文末。</p>
+<p hidden="" id="load-error" role="alert"></p>
+</main>
+<dialog id="full-dialog"><div class="dialog-bar"><h2 id="full-title"></h2><button aria-label="关闭整篇预览" id="close-full">关闭 ×</button></div><div id="full-content"></div></dialog>
+</body>
+</html>
+
