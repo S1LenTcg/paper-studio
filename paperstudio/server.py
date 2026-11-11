@@ -11,6 +11,7 @@ import sys
 import threading
 import uuid
 import webbrowser
+from functools import cached_property
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -50,9 +51,13 @@ class Application:
                 status.update(stage="interrupted", message="服务已重启，请先查看秀米，再决定是否重新发送", updatedAt=now())
                 write_json(path, status)
 
-    def sample_url(self):
+    @cached_property
+    def _sample_urls(self):
         return {source: "data:" + mimetypes.guess_type(filename)[0] + ";base64," + base64.b64encode((WEB / filename).read_bytes()).decode()
                 for source, filename in BUILTIN_IMAGES.items()}
+
+    def sample_url(self):
+        return self._sample_urls
 
     def reference_list(self):
         result = []
@@ -208,13 +213,13 @@ class Handler(BaseHTTPRequestHandler):
             return False
         return True
 
-    def send_bytes(self, body, content_type, status=200, download=None):
+    def send_bytes(self, body, content_type, status=200, download=None, cache_control="no-store"):
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Referrer-Policy", "no-referrer")
-        self.send_header("Cache-Control", "no-store")
+        self.send_header("Cache-Control", cache_control)
         self.send_header("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'self'")
         if download:
             self.send_header("Content-Disposition", f'attachment; filename="{download}"')
@@ -261,7 +266,8 @@ class Handler(BaseHTTPRequestHandler):
             files = {"/": "index.html", "/compact.css": "compact.css", "/standards.js": "standards.js", "/standards.css": "standards.css", "/app.js": "app.js", "/ai.js": "ai.js", "/styles.css": "styles.css", "/creative": "creative.html", "/creative.css": "creative.css", "/creative.js": "creative.js", **BUILTIN_IMAGES}
             if path in files:
                 file = WEB / files[path]
-                return self.send_bytes(file.read_bytes(), mimetypes.guess_type(str(file))[0] + ("; charset=utf-8" if file.suffix in {".html", ".js", ".css"} else ""))
+                return self.send_bytes(file.read_bytes(), mimetypes.guess_type(str(file))[0] + ("; charset=utf-8" if file.suffix in {".html", ".js", ".css"} else ""),
+                                       cache_control="private, max-age=3600" if path in BUILTIN_IMAGES else "no-store")
             return self.json({"error": "未找到页面"}, 404)
         except FileNotFoundError:
             self.json({"error": "未找到记录"}, 404)
@@ -294,7 +300,8 @@ class Handler(BaseHTTPRequestHandler):
                     return self.json(self.app.standards.apply(job_id, data), 202)
                 return self.json(self.app.standards.cancel(job_id))
             if path == "/api/render":
-                return self.json({"html": render(data.get("document"), self.app.sample_url())})
+                images = None if data.get("preview") is True else self.app.sample_url()
+                return self.json({"html": render(data.get("document"), images)})
             if path == "/api/ai/settings":
                 return self.json(self.app.ai.configure(data))
             if path == "/api/ai/jobs":

@@ -51,7 +51,13 @@ class DraftStore:
         for path in self.root.glob("*.json"):
             try:
                 r = json.loads(path.read_text(encoding="utf-8"))
+                if not isinstance(r, dict) or not isinstance(r.get("document"), dict):
+                    continue
+                if not valid_id(r.get("id")) or r["id"] != path.stem:
+                    continue
+                if not all(isinstance(value, str) for value in (r.get("updatedAt"), r["document"].get("title"), r["document"].get("theme"))):
+                    continue
                 result.append({"id": r["id"], "title": r["document"]["title"], "theme": r["document"]["theme"], "reference": bool(r["document"].get("referenceStyle")), "updatedAt": r["updatedAt"]})
-            except (ValueError, KeyError):
+            except (ValueError, KeyError, OSError):
                 continue
         return sorted(result, key=lambda r: r["updatedAt"], reverse=True)

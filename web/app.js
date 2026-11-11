@@ -2,7 +2,12 @@
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
-const clone = (value) => JSON.parse(JSON.stringify(value));
+// Copy mutable containers; immutable image strings can be shared by undo snapshots.
+function clone(value) {
+  if (Array.isArray(value)) return value.map(clone);
+  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key,item]) => [key,clone(item)]));
+  return value;
+}
 const labels = {heading:'小标题', paragraph:'正文', quote:'引用', image:'图片', divider:'分隔', signature:'署名'};
 let bootstrap, session, selected = 0, history = [], renderTimer, saveTimer, toastTimer;
 let renderVersion = 0, saveChain = Promise.resolve(), activeJob = null, jobTimer;
@@ -48,24 +53,56 @@ function changed() {
   updateCounters();
 }
 
+function hasUnsavedChanges(owner=session) {
+  return !!owner && (owner.revision || 0) > (owner.savedRevision || 0);
+}
+
+function bindSaveLifecycle() {
+  window.addEventListener('beforeunload', event => {
+    if (!hasUnsavedChanges()) return;
+    event.preventDefault();
+    event.returnValue = '';
+  });
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden' && hasUnsavedChanges()) {
+      saveDraft(false).catch(error => toast(error.message,true));
+    }
+  });
+}
+
+function newDraftId() {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, byte => byte.toString(16).padStart(2,'0')).join('');
+}
+
 async function saveDraft(notify=true) {
   clearTimeout(saveTimer);
   const owner = session;
   const revision = owner.revision || 0;
   const doc = documentValue();
+  // Keep the id even when the response is lost, so retry updates the same draft.
+  if (!owner.id) owner.id = newDraftId();
+  $('#save-state').textContent = '正在保存…';
   saveChain = saveChain.catch(() => {}).then(async () => {
-    const record = await api('/api/drafts', {id:owner.id, document:doc});
-    owner.id = record.id;
-    owner.savedRevision = Math.max(owner.savedRevision || 0, revision);
-    if (session === owner) {
-      $('#save-state').textContent = (owner.revision || 0) === revision ? '已保存到本机' : '正在编辑…';
-      try { localStorage.setItem('paper-studio.last-draft', record.id); } catch (_) { /* Server remains the source of truth. */ }
+    try {
+      const record = await api('/api/drafts', {id:owner.id, document:doc});
+      owner.id = record.id;
+      owner.savedRevision = Math.max(owner.savedRevision || 0, revision);
+      if (session === owner) {
+        $('#save-state').textContent = hasUnsavedChanges(owner) ? '正在编辑…' : '已保存到本机';
+        try { localStorage.setItem('paper-studio.last-draft', record.id); } catch (_) { /* Server remains the source of truth. */ }
+      }
+      return record;
+    } catch (error) {
+      if (session === owner) $('#save-state').textContent = '未保存 · 请重试保存';
+      throw error;
     }
-    return record;
   });
   const result = await saveChain;
   if (notify) toast('草稿已保存到这台电脑');
-  await refreshDrafts();
+  try { await refreshDrafts(); }
+  catch (_) { toast('稿件已保存，但草稿列表刷新失败，请稍后重新打开列表',true); }
   return result;
 }
 
@@ -110,7 +147,7 @@ function fillFields() {
 async function updatePreview() {
   const version = ++renderVersion;
   try {
-    const result = await api('/api/render', {document:documentValue()});
+    const result = await api('/api/render', {document:documentValue(),preview:true});
     if (version !== renderVersion) return;
     const frame = $('#article-preview');
     frame.srcdoc = '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>html,body{overflow:hidden}body{margin:0}img{max-width:100%}*{box-sizing:border-box}</style></head><body>' + result.html + '</body></html>';
@@ -213,7 +250,7 @@ async function compareThemes() {
     const frame=document.createElement('iframe');frame.title=theme.name+'版式预览';frame.setAttribute('sandbox','allow-same-origin');page.append(frame);scroll.append(page);
     const choose=document.createElement('button');choose.className='secondary full';choose.textContent='使用'+theme.name;choose.onclick=()=>{selectTheme(id);dialog.close();};
     card.append(heading,note,scroll,choose);grid.append(card);
-    try{const result=await api('/api/render',{document:{...source,theme:id,referenceStyle:null,aiLayout:null}});
+    try{const result=await api('/api/render',{document:{...source,theme:id,referenceStyle:null,aiLayout:null},preview:true});
       const fit=()=>{const scale=scroll.clientWidth/390;const height=frame.contentDocument?.body?.scrollHeight||1600;frame.style.height=height+'px';frame.style.transform=`scale(${scale})`;page.style.height=(height*scale)+'px';};
       frame.onload=()=>{fit();scroll.scrollTop=0;const observer=new ResizeObserver(fit);observer.observe(scroll);dialog.addEventListener('close',()=>observer.disconnect(),{once:true});};
       frame.srcdoc='<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><style>body{margin:0}*{box-sizing:border-box}img{max-width:100%}</style></head><body>'+result.html+'</body></html>';
@@ -358,8 +395,16 @@ async function importFile(file) {
     for(const line of lines){if(/^#{1,3} /.test(line)){flush();doc.blocks.push({type:'heading',text:line.replace(/^#{1,3} /,'')});}else if(line.startsWith('> ')){flush();doc.blocks.push({type:'quote',text:line.slice(2)});}else if(!line.trim()){flush();}else{paragraph.push(line);}}flush();
     if(!doc.blocks.length)doc.blocks=[{type:'paragraph',text:''}];
   }
-  await api('/api/render',{document:doc});
-  clearTimeout(saveTimer);if((session.revision||0)>(session.savedRevision||0))await saveDraft(false);else await saveChain.catch(()=>{});session={id:null,doc};selected=0;history=[];fillFields();showView('editor');await saveDraft(false);toast('已导入为一篇新草稿');
+  await api('/api/render',{document:doc,preview:true});
+  clearTimeout(saveTimer);
+  if(hasUnsavedChanges())await saveDraft(false);else await saveChain.catch(()=>{});
+  // Only switch after persistence succeeds, and use the server's normalized model.
+  const record=await api('/api/drafts',{id:newDraftId(),document:doc});
+  session={id:record.id,doc:record.document};selected=0;history=[];previewResetRequested=true;
+  fillFields();$('#save-state').textContent='已保存到本机';showView('editor');
+  try{localStorage.setItem('paper-studio.last-draft',record.id);}catch(_){}
+  refreshDrafts().catch(error=>toast(error.message,true));
+  toast('已导入为一篇新草稿');
 }
 
 const terminal = new Set(['failed','cancelled','uncertain','verified','review_required','interrupted']);
@@ -403,6 +448,7 @@ async function pollJob(version=xiumiVersion) {
 }
 
 function bind() {
+  bindSaveLifecycle();
   for(const button of $$('[data-workspace-pane]')){
     if(button.tagName!=='BUTTON')continue;
     button.onclick=()=>{
@@ -493,7 +539,7 @@ function referenceDocument(){
 async function previewReference(){
   if(!referenceRecord)return;
   const version=++referencePreviewVersion,doc=referenceDocument();
-  const result=await api('/api/render',{document:doc});if(version!==referencePreviewVersion)return;
+  const result=await api('/api/render',{document:doc,preview:true});if(version!==referencePreviewVersion)return;
   referencePreviewDoc=doc;const frame=$('#reference-preview-frame');frame.hidden=false;$('#reference-preview-empty').hidden=true;
   frame.onload=fitReferenceCanvases;
   frame.srcdoc=referenceFrameHTML(result.html);
@@ -556,7 +602,7 @@ function bindReference(){
   $('#reference-refresh').onclick=()=>previewReference().catch(e=>referenceStatus(e.message,true));
   $('#apply-reference').onclick=async()=>{if(!referenceRecord||referenceBusy)return;$('#apply-reference').disabled=true;
     try{await previewReference();clearTimeout(saveTimer);if((session.revision||0)>(session.savedRevision||0))await saveDraft(false);else await saveChain.catch(()=>{});
-      session={id:null,doc:clone(referencePreviewDoc)};history=[];selected=0;previewResetRequested=true;fillFields();await saveDraft(false);$('#reference-dialog').close();showView('editor');toast('已生成参考排版新稿，原草稿保留');
+      session={id:null,doc:clone(referencePreviewDoc),revision:1,savedRevision:0};history=[];selected=0;previewResetRequested=true;fillFields();await saveDraft(false);$('#reference-dialog').close();showView('editor');toast('已生成参考排版新稿，原草稿保留');
     }catch(error){referenceStatus(error.message,true);}finally{$('#apply-reference').disabled=false;}
   };
 }

@@ -95,6 +95,32 @@ class ServerTests(unittest.TestCase):
         self.assertNotIn(b'/assets/sample.png',body)
         self.assertNotIn(b'/assets/auditorium.jpg',body)
 
+    def test_preview_reuses_local_images_but_copy_html_stays_portable(self):
+        status,body,_=self.request('POST','/api/render',{'document':SAMPLE,'preview':True})
+        self.assertEqual(status,200)
+        self.assertIn(b'/assets/auditorium.jpg',body)
+        self.assertNotIn(b'data:image/jpeg;base64,',body)
+        status,body,_=self.request('POST','/api/render',{'document':SAMPLE})
+        self.assertEqual(status,200)
+        self.assertIn(b'data:image/jpeg;base64,',body)
+        self.assertNotIn(b'/assets/auditorium.jpg',body)
+
+    def test_only_public_builtin_images_can_be_cached(self):
+        _,_,headers=self.request('GET','/assets/auditorium.jpg')
+        self.assertIn('max-age=',headers['Cache-Control'])
+        for route in ['/app.js','/api/drafts','/api/bootstrap']:
+            with self.subTest(route=route):
+                _,_,headers=self.request('GET',route)
+                self.assertEqual(headers['Cache-Control'],'no-store')
+
+    def test_malformed_draft_does_not_break_other_drafts(self):
+        with tempfile.TemporaryDirectory(dir=TEST_TMP) as tmp:
+            store=DraftStore(tmp)
+            good=store.save(SAMPLE)
+            for value in [None,[],{'document':None},{'id':'bad','updatedAt':2,'document':{'title':[],'theme':{}}}]:
+                write_json(Path(tmp)/(uuid.uuid4().hex+'.json'),value)
+            self.assertEqual([r['id'] for r in store.list()],[good['id']])
+
     def test_existing_png_drafts_still_export_original_image(self):
         doc=copy.deepcopy(SAMPLE);doc['blocks'][1]['src']='/assets/sample.png'
         status,body,_=self.request('POST','/api/exports',{'document':doc})

@@ -76,7 +76,7 @@ async function showAIResult(){
   for(const note of r.notes){const li=document.createElement('li');li.textContent=note;notes.append(li);}
   $('#ai-model-used').textContent=`${r.model} · ${r.host}`;
   for(const [id,doc] of [['#ai-before-frame',aiState.source],['#ai-after-frame',aiState.result]]){
-    const result=await api('/api/render',{document:doc});const frame=$(id);frame.style.height='1px';frame.onload=fitAIPreview;frame.srcdoc=referenceFrameHTML(result.html);
+    const result=await api('/api/render',{document:doc,preview:true});const frame=$(id);frame.style.height='1px';frame.onload=fitAIPreview;frame.srcdoc=referenceFrameHTML(result.html);
   }
   $('#ai-feedback').value='';$('#ai-original-title').textContent=aiState.source.title;
   $('#ai-preview-canvases').hidden=false;fitAIPreview();
@@ -109,7 +109,7 @@ function bindAI(){
   $('#ai-back').onclick=async()=>{if(!aiState.history.length||aiState.busy)return;const previous=aiState.history.pop();Object.assign(aiState,previous);await showAIResult();aiBusy(false);savedAIJob(aiState.record.id);aiMessage('已回到上一版方案，没有发起新的模型请求。');};
   $('#ai-apply').onclick=async()=>{if(!aiState.result||aiState.busy)return;$('#ai-apply').disabled=true;
     try{clearTimeout(saveTimer);if((session.revision||0)>(session.savedRevision||0))await saveDraft(false);else await saveChain.catch(()=>{});
-      session={id:null,doc:clone(aiState.result)};history=[];selected=0;previewResetRequested=true;fillFields();await saveDraft(false);$('#ai-dialog').close();showView('editor');toast('已保存为 AI 排版新稿，原草稿保留');
+      session={id:null,doc:clone(aiState.result),revision:1,savedRevision:0};history=[];selected=0;previewResetRequested=true;fillFields();await saveDraft(false);$('#ai-dialog').close();showView('editor');toast('已保存为 AI 排版新稿，原草稿保留');
     }catch(e){aiMessage(e.message,true);}finally{$('#ai-apply').disabled=false;}
   };
 }
