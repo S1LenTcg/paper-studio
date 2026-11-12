@@ -1,7 +1,23 @@
 'use strict';
 
-const aiState={base:null,source:null,result:null,record:null,history:[],busy:false,job:null,version:0};
-function savedAIJob(id){try{if(id!==undefined)localStorage.setItem('paper-studio.ai-job',id);return localStorage.getItem('paper-studio.ai-job');}catch(_){return aiState.job;}}
+const aiState={base:null,source:null,result:null,record:null,history:[],busy:false,lastJob:null,submission:null,version:0};
+
+function savedAIJob(value) {
+  const key = 'paper-studio.ai-job';
+  if (value !== undefined) {
+    aiState.lastJob = value;
+    try { localStorage.setItem(key, JSON.stringify(value)); } catch (_) { /* Use the in-memory task in this tab. */ }
+    return value;
+  }
+  try {
+    const stored = localStorage.getItem(key);
+    if (/^[a-f0-9]{32}$/.test(stored || '')) return {id:stored,pending:false};
+    const entry = JSON.parse(stored);
+    return /^[a-f0-9]{32}$/.test(entry?.id || '') ? entry : null;
+  } catch (_) {
+    return aiState.lastJob;
+  }
+}
 
 function aiMessage(message,error=false){$('#ai-status').textContent=message;$('#ai-status').classList.toggle('ai-error',error);}
 
@@ -9,8 +25,8 @@ async function openAI(){
   if(!aiState.busy){aiState.base=documentValue();}
   $('#ai-current-source').textContent='留空时使用：'+aiState.base.title.replace(/\n/g,' ')+' · '+aiState.base.blocks.filter(b=>b.type==='image').length+' 张图片';
   $('#ai-dialog').showModal();
-  $('#ai-restore').hidden=!savedAIJob();
-  try{const config=await api('/api/ai/settings');fillAIConfig(config);if(!config.configured)aiMessage('请先配置模型。');}
+  aiBusy(aiState.busy);
+  try{const config=await api('/api/ai/settings');fillAIConfig(config);if(!config.configured&&!aiState.busy&&!savedAIJob()?.pending)aiMessage('请先配置模型。');}
   catch(e){aiMessage(e.message,true);}
   fitAIPreview();
 }
@@ -32,39 +48,101 @@ function ownAIDocument(){
 
 function aiBusy(value){
   aiState.busy=value;
-  for(const id of ['#ai-generate','#ai-refine','#ai-save-config','#ai-clear-key','#ai-restore'])$(id).disabled=value;
-  $('#ai-apply').disabled=value||!aiState.result;$('#ai-back').disabled=value||!aiState.history.length;
-  $('#ai-generate').textContent=value?'正在生成…':'生成排版方案';
+  const job = savedAIJob();
+  for(const id of ['#ai-generate','#ai-save-config','#ai-clear-key','#ai-restore'])$(id).disabled=value;
+  $('#ai-restore').hidden = !job;
+  $('#ai-refine').disabled = value || !!job?.pending;
+  $('#ai-apply').disabled=value||!aiState.result;
+  $('#ai-back').disabled=value||!!job?.pending||!aiState.history.length;
+  $('#ai-generate').textContent=value?'正在处理…':job?.pending?'恢复或重试上次提交':'生成排版方案';
 }
 
 async function generateAI(refine=false){
   if(aiState.busy)return;
-  try{
+  const previous = savedAIJob();
+  const version = ++aiState.version;
+  let polling = false;
+  aiBusy(true);
+  try {
+    if (previous?.pending) {
+      aiMessage('正在查找上次提交的任务…');
+      const existing = await api('/api/ai/jobs/'+previous.id).catch(error => {
+        if (error.status !== 404) throw error;
+        return null;
+      });
+      if (existing) {
+        polling = true;
+        await pollAI(previous.id, version, existing);
+        return;
+      }
+    }
     const config=await api('/api/ai/settings');
     if(!config.configured){$('#ai-configuration').open=true;aiMessage('请先填写模型地址、模型名和 API Key，并点击“使用本次配置”。',true);return;}
-    if(refine&&!aiState.result)return;
-    const requirement=$('#ai-requirement').value.trim(),feedback=$('#ai-feedback').value.trim();
-    if(!requirement){aiMessage('先写一句排版要求，也可以选择上面的示例。',true);return;}
-    if(refine&&!feedback){aiMessage('请说明这一版还需要调整哪里。',true);return;}
-    const source=refine?clone(aiState.result):ownAIDocument();
-    const instruction=refine?`原始要求：${requirement}\n这轮调整：${feedback}`:requirement;
-    aiBusy(true);aiMessage(`正在请求 ${config.model}，完成后会检查原文完整性。关闭窗口后任务仍会继续。`);
-    const record=await api('/api/ai/jobs',{document:source,requirement:instruction});
-    aiState.job=record.id;savedAIJob(record.id);$('#ai-restore').hidden=false;
-    pollAI(record.id,++aiState.version);
-  }catch(e){aiBusy(false);aiMessage(e.message,true);}
+    let payload = previous?.pending && aiState.submission?.requestId === previous.id ? aiState.submission : null;
+    if (!payload) {
+      if(refine&&!aiState.result)return;
+      const requirement=$('#ai-requirement').value.trim(),feedback=$('#ai-feedback').value.trim();
+      if(!requirement){aiMessage('先写一句排版要求，也可以选择上面的示例。',true);return;}
+      if(refine&&!feedback){aiMessage('请说明这一版还需要调整哪里。',true);return;}
+      payload = {
+        requestId:previous?.pending ? previous.id : newDraftId(),
+        document:refine ? clone(aiState.result) : ownAIDocument(),
+        requirement:refine ? `原始要求：${requirement}\n这轮调整：${feedback}` : requirement,
+      };
+    }
+    const id = payload.requestId;
+    aiState.submission = payload;
+    savedAIJob({id,pending:true});
+    $('#ai-restore').hidden = false;
+    aiMessage(`正在请求 ${config.model}，完成后会检查原文完整性。关闭窗口后任务仍会继续。`);
+    let record;
+    try {
+      record = await api('/api/ai/jobs', payload);
+    } catch (error) {
+      if (error.status >= 400 && error.status < 500 && error.code !== 'request_conflict') {
+        if (!previous?.pending && savedAIJob()?.id === id) savedAIJob(previous);
+        if (!previous?.pending) aiState.submission = null;
+        throw error;
+      }
+      aiMessage('提交结果尚未确认，正在按编号查找原任务…');
+    }
+    polling = true;
+    await pollAI(id, version, record);
+  } catch(error) {
+    aiMessage(error.message,true);
+  } finally {
+    if (!polling) aiBusy(false);
+  }
 }
 
-async function pollAI(id,version){
+async function pollAI(id,version,record){
   try{
-    const record=await api('/api/ai/jobs/'+id);if(version!==aiState.version)return;
+    record ??= await api('/api/ai/jobs/'+id);
+    if(version!==aiState.version)return;
+    if (savedAIJob()?.id === id) savedAIJob({id,pending:false});
+    if (aiState.submission?.requestId === id) aiState.submission = null;
     if(['queued','generating'].includes(record.stage)){setTimeout(()=>pollAI(id,version),1800);return;}
     if(record.stage!=='ready'){aiBusy(false);aiMessage(record.error||'这次没有生成可用方案，没有自动重试。',true);return;}
     if(aiState.record&&aiState.record.id!==record.id){aiState.history.push({record:aiState.record,source:aiState.source,result:aiState.result});if(aiState.history.length>5)aiState.history.shift();}
     aiState.record=record;aiState.source=record.source;aiState.result=record.document;
     await showAIResult();aiBusy(false);
     aiMessage('方案已生成，文字完整性检查通过。先查看试排，再决定是否保存为新稿。');
-  }catch(e){if(version!==aiState.version)return;aiBusy(false);aiMessage('暂时无法读取任务结果。可以用“恢复上次任务”继续查看，不会自动重发生成请求。',true);}
+  } catch (error) {
+    if (version !== aiState.version) return;
+    aiBusy(false);
+    const pending = savedAIJob()?.pending;
+    aiMessage(pending && error.status === 404
+      ? '暂未找到这次任务。可再次恢复，或点击“恢复或重试上次提交”沿用同一编号。'
+      : '暂时无法读取任务结果。可以用“恢复上次任务”继续查看，不会自动重发生成请求。', true);
+  }
+}
+
+function restoreAI() {
+  const job = savedAIJob();
+  if (!job || aiState.busy) return;
+  aiBusy(true);
+  aiMessage('正在恢复上次任务…');
+  return pollAI(job.id, ++aiState.version);
 }
 
 async function showAIResult(){
@@ -105,11 +183,14 @@ function bindAI(){
   new ResizeObserver(fitAIPreview).observe($('#ai-preview-canvases'));
   $('#ai-save-config').onclick=async()=>{try{const config=await api('/api/ai/settings',{baseUrl:$('#ai-base-url').value,model:$('#ai-model').value,apiKey:$('#ai-key').value,tokenField:$('#ai-token-field').value,jsonMode:$('#ai-json-mode').checked});$('#ai-key').value='';fillAIConfig(config);aiMessage(config.configured?'本次模型配置已就绪。点击生成时才会发送文稿。':'配置已更新，请补充模型名或 API Key。');}catch(e){aiMessage(e.message,true);}};
   $('#ai-clear-key').onclick=async()=>{try{fillAIConfig(await api('/api/ai/settings',{clearKey:true}));$('#ai-key').value='';aiMessage('本次服务的密钥已清除。');}catch(e){aiMessage(e.message,true);}};
-  $('#ai-restore').onclick=async()=>{const id=savedAIJob();if(!/^[a-f0-9]{32}$/.test(id||''))return;aiBusy(true);aiState.job=id;aiMessage('正在恢复上次任务…');pollAI(id,++aiState.version);};
-  $('#ai-back').onclick=async()=>{if(!aiState.history.length||aiState.busy)return;const previous=aiState.history.pop();Object.assign(aiState,previous);await showAIResult();aiBusy(false);savedAIJob(aiState.record.id);aiMessage('已回到上一版方案，没有发起新的模型请求。');};
+  $('#ai-restore').onclick=restoreAI;
+  $('#ai-back').onclick=async()=>{if(!aiState.history.length||aiState.busy||savedAIJob()?.pending)return;const previous=aiState.history.pop();Object.assign(aiState,previous);await showAIResult();savedAIJob({id:aiState.record.id,pending:false});aiBusy(false);aiMessage('已回到上一版方案，没有发起新的模型请求。');};
   $('#ai-apply').onclick=async()=>{if(!aiState.result||aiState.busy)return;$('#ai-apply').disabled=true;
-    try{clearTimeout(saveTimer);if((session.revision||0)>(session.savedRevision||0))await saveDraft(false);else await saveChain.catch(()=>{});
-      session={id:null,doc:clone(aiState.result),revision:1,savedRevision:0};history=[];selected=0;previewResetRequested=true;fillFields();await saveDraft(false);$('#ai-dialog').close();showView('editor');toast('已保存为 AI 排版新稿，原草稿保留');
+    try {
+      const opened = await switchDraft(() => ({id:null,doc:clone(aiState.result)}),
+        '已保存到本机', {saveAsNew:true});
+      if (!opened) return;
+      $('#ai-dialog').close();toast('已保存为 AI 排版新稿，原草稿保留');
     }catch(e){aiMessage(e.message,true);}finally{$('#ai-apply').disabled=false;}
   };
 }

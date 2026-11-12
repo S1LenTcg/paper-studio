@@ -11,6 +11,7 @@ function clone(value) {
 const labels = {heading:'小标题', paragraph:'正文', quote:'引用', image:'图片', divider:'分隔', signature:'署名'};
 let bootstrap, session, selected = 0, history = [], renderTimer, saveTimer, toastTimer;
 let renderVersion = 0, saveChain = Promise.resolve(), activeJob = null, jobTimer;
+let draftSwitchVersion = 0;
 let previewResetRequested = false, articleResizeObserver = null;
 let viewedXiumiJob = null, xiumiVersion = 0, xiumiSending = false, xiumiRequest = null, xiumiRetryAllowed = false;
 let draftCache = [];
@@ -19,7 +20,9 @@ async function api(path, data) {
   const options = data === undefined ? {} : {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data)};
   const response = await fetch(path, options);
   const value = await response.json();
-  if (!response.ok) throw new Error(value.error || '操作未完成，请重试');
+  if (!response.ok) {
+    throw Object.assign(new Error(value.error || '操作未完成，请重试'), {status:response.status, code:value.code});
+  }
   return value;
 }
 
@@ -45,12 +48,18 @@ function remember() {
 
 function changed() {
   session.revision = (session.revision || 0) + 1;
-  $('#save-state').textContent = '正在编辑…';
   clearTimeout(renderTimer);
   renderTimer = setTimeout(updatePreview, 160);
+  if (!session.conflict) {
+    $('#save-state').textContent = '正在编辑…';
+    scheduleDraftSave();
+  }
+  updateCounters();
+}
+
+function scheduleDraftSave() {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => saveDraft(false).catch(error => toast(error.message,true)), 1000);
-  updateCounters();
 }
 
 function hasUnsavedChanges(owner=session) {
@@ -64,7 +73,7 @@ function bindSaveLifecycle() {
     event.returnValue = '';
   });
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'hidden' && hasUnsavedChanges()) {
+    if (document.visibilityState === 'hidden' && hasUnsavedChanges() && !session.conflict) {
       saveDraft(false).catch(error => toast(error.message,true));
     }
   });
@@ -76,37 +85,80 @@ function newDraftId() {
   return Array.from(bytes, byte => byte.toString(16).padStart(2,'0')).join('');
 }
 
-async function saveDraft(notify=true) {
+function draftSession(record) {
+  return {id:record.id, version:record.version, doc:record.document};
+}
+
+function rememberDraftId(id) {
+  if (!id) return;
+  try { localStorage.setItem('paper-studio.last-draft', id); } catch (_) { /* The draft remains available in the list. */ }
+}
+
+function draftSaveStatus(owner, message) {
+  if (session !== owner) return;
+  $('#save-state').textContent = message;
+  $('#draft-conflict').hidden = !owner.conflict;
+  $('#save-button').disabled = !!owner.conflict;
+}
+
+async function persistDraftWrite(owner) {
+  const {data, revision} = owner.pendingSave;
+  const record = await api('/api/drafts', data);
+  owner.pendingSave = null;
+  owner.id = record.id;
+  owner.version = record.version;
+  owner.savedRevision = revision;
+  owner.conflict = null;
+  if (session === owner) rememberDraftId(record.id);
+  return record;
+}
+
+async function saveDraft(notify=true, asCopy=false) {
   clearTimeout(saveTimer);
   const owner = session;
   const revision = owner.revision || 0;
   const doc = documentValue();
-  // Keep the id even when the response is lost, so retry updates the same draft.
-  if (!owner.id) owner.id = newDraftId();
-  $('#save-state').textContent = '正在保存…';
   saveChain = saveChain.catch(() => {}).then(async () => {
+    if (owner.conflict && !asCopy) throw owner.conflict;
+    if (asCopy && !owner.conflict) return;
+    draftSaveStatus(owner, '正在保存…');
     try {
-      const record = await api('/api/drafts', {id:owner.id, document:doc});
-      owner.id = record.id;
-      owner.savedRevision = Math.max(owner.savedRevision || 0, revision);
-      if (session === owner) {
-        $('#save-state').textContent = hasUnsavedChanges(owner) ? '正在编辑…' : '已保存到本机';
-        try { localStorage.setItem('paper-studio.last-draft', record.id); } catch (_) { /* Server remains the source of truth. */ }
+      // Replay an unconfirmed write with the same id, version and content before saving newer edits.
+      let record = owner.pendingSave ? await persistDraftWrite(owner) : null;
+      if (owner.conflict || !owner.version || revision > (owner.savedRevision || 0)) {
+        owner.pendingSave = {revision, data:{
+          id:owner.conflict ? newDraftId() : (owner.id || newDraftId()),
+          expectedVersion:owner.conflict ? null : (owner.version ?? null),
+          writeId:newDraftId(),
+          document:doc,
+        }};
+        record = await persistDraftWrite(owner);
       }
+      const dirty = hasUnsavedChanges(owner);
+      draftSaveStatus(owner, dirty ? '正在编辑…' : '已保存到本机');
+      if (asCopy && session === owner && dirty) scheduleDraftSave();
       return record;
     } catch (error) {
-      if (session === owner) $('#save-state').textContent = '未保存 · 请重试保存';
+      if (error.status >= 400 && error.status < 500) owner.pendingSave = null;
+      if (error.code === 'draft_conflict') {
+        owner.pendingSave = null;
+        owner.conflict = error;
+        if (session === owner) clearTimeout(saveTimer);
+      }
+      draftSaveStatus(owner, owner.conflict ? '保存冲突 · 本页有未保存的修改' : '未保存 · 请重试保存');
       throw error;
     }
   });
   const result = await saveChain;
-  if (notify) toast('草稿已保存到这台电脑');
+  if (notify) toast(asCopy ? '当前编辑已另存为副本' : '草稿已保存到这台电脑');
+  if (!result) return;
   try { await refreshDrafts(); }
   catch (_) { toast('稿件已保存，但草稿列表刷新失败，请稍后重新打开列表',true); }
   return result;
 }
 
 function showView(name) {
+  ++draftSwitchVersion;
   for (const view of ['home','editor','drafts']) {
     $(`#${view}-view`).hidden = view !== name;
     $(`#nav-${view}`).classList.toggle('active',view===name);
@@ -160,7 +212,7 @@ async function updatePreview() {
       }
       if (previewResetRequested) { $('.preview-scroll').scrollTop=0; previewResetRequested=false; }
     };
-  } catch (error) { toast(error.message,true); }
+  } catch (error) { if (version === renderVersion) toast(error.message,true); }
 }
 
 function renderBlocks() {
@@ -204,7 +256,20 @@ function renderBlockEditor() {
       if(file.size>8000000){toast('图片请控制在 8 MB 以内',true);return;}
       if(!['image/png','image/jpeg','image/webp'].includes(file.type)){toast('支持 PNG、JPEG、WebP 图片',true);return;}
       const owner=session;
-      const reader=new FileReader();reader.onload=()=>{if(session!==owner || !owner.doc.blocks.includes(block))return;remember();block.src=reader.result;renderBlockEditor();changed();};reader.readAsDataURL(file);
+      const reader = new FileReader();
+      const reading = new Promise(resolve => reader.addEventListener('loadend', resolve, {once:true}));
+      owner.imageReads ??= new Set();
+      owner.imageReads.add(reading);
+      reader.onload = () => {
+        if (session !== owner || !owner.doc.blocks.includes(block)) return;
+        remember();block.src=reader.result;renderBlockEditor();changed();
+      };
+      try {
+        reader.readAsDataURL(file);
+        await reading;
+      } finally {
+        owner.imageReads.delete(reading);
+      }
     };
     container.append(replace,input);
   }
@@ -274,27 +339,75 @@ function renderDrafts() {
   }
 }
 
-async function loadDraft(id) {
-  clearTimeout(saveTimer);if((session.revision||0)>(session.savedRevision||0))await saveDraft(false);else await saveChain.catch(()=>{});
-  const record=await api(`/api/drafts/${id}`);session={id:record.id,doc:record.document};history=[];selected=0;previewResetRequested=true;fillFields();$('#save-state').textContent='已保存到本机';showView('editor');
+async function switchDraft(prepare, status, {saveAsNew=false, beforeDisplay}={}) {
+  const owner = session;
+  const ownerVersion = owner.version;
+  const version = ++draftSwitchVersion;
+  const isCurrent = () => session === owner && version === draftSwitchVersion;
+  let next;
+  try {
+    next = await prepare();
+    if (!next) return false;
+    while (isCurrent()) {
+      const saving = saveChain;
+      await saving.catch(() => {});
+      if (!isCurrent()) return false;
+      if (saving !== saveChain) continue;
+      if (owner.imageReads?.size) {
+        await Promise.all(owner.imageReads);
+        continue;
+      }
+      if (hasUnsavedChanges(owner)) {
+        await saveDraft(false);
+        continue;
+      }
+      if (!saveAsNew) break;
+      next = draftSession(await api('/api/drafts', {id:newDraftId(), document:next.doc}));
+      saveAsNew = false;
+      // Save any edits made to the original while the new draft was being written.
+    }
+  } catch (error) {
+    if (isCurrent()) throw error;
+    return false;
+  }
+  if (!isCurrent()) return false;
+  if (next.id && next.id === owner.id && owner.version !== ownerVersion) {
+    // The loaded record predates a save of this same draft. Keep the edited session.
+    showView('editor');
+    return true;
+  }
+  clearTimeout(saveTimer);
+  clearTimeout(renderTimer);
+  session = next;
+  history = [];
+  selected = 0;
+  previewResetRequested = true;
+  rememberDraftId(next.id);
+  beforeDisplay?.();
+  fillFields();
+  draftSaveStatus(next, status);
+  showView('editor');
+  return true;
 }
 
-async function newDraft() {
-  clearTimeout(saveTimer);if((session.revision||0)>(session.savedRevision||0))await saveDraft(false);else await saveChain.catch(()=>{});
-  session={id:null,doc:clone(bootstrap.sample)};history=[];selected=0;previewResetRequested=true;fillFields();$('#save-state').textContent='示例文稿 · 可直接修改';showView('editor');
+function loadDraft(id) {
+  return switchDraft(async () => draftSession(await api(`/api/drafts/${id}`)), '已保存到本机');
+}
+
+function newDraft() {
+  return switchDraft(() => ({id:null,doc:clone(bootstrap.sample)}), '示例文稿 · 可直接修改');
 }
 
 async function newBlankDraft() {
-  clearTimeout(saveTimer);if((session.revision||0)>(session.savedRevision||0))await saveDraft(false);else await saveChain.catch(()=>{});
   const doc=clone(bootstrap.sample);
-  Object.assign(doc,{title:'',subtitle:'',author:'',column:'',blocks:[{type:'paragraph',text:''}]});
+  Object.assign(doc,{title:'',subtitle:'',column:'',author:'',blocks:[{type:'paragraph',text:''}]});
   delete doc.referenceStyle;delete doc.aiLayout;
-  session={id:null,doc};history=[];selected=0;previewResetRequested=true;
-  $('.editor-grid').dataset.panel='blocks';$('.editor-grid').dataset.workspacePane='edit';
-  for(const button of $$('.editor-panel-tabs button'))button.setAttribute('aria-pressed',String(button.dataset.editorPanel==='blocks'));
-  for(const button of $$('.workspace-switch button'))button.setAttribute('aria-pressed',String(button.dataset.workspacePane==='edit'));
-  fillFields();$('#save-state').textContent='新文章';showView('editor');
-  $('#title-input').focus();
+  const opened = await switchDraft(() => ({id:null,doc}), '新文章', {beforeDisplay:() => {
+    $('.editor-grid').dataset.panel='blocks';$('.editor-grid').dataset.workspacePane='edit';
+    for(const button of $$('.editor-panel-tabs button'))button.setAttribute('aria-pressed',String(button.dataset.editorPanel==='blocks'));
+    for(const button of $$('.workspace-switch button'))button.setAttribute('aria-pressed',String(button.dataset.workspacePane==='edit'));
+  }});
+  if (opened) $('#title-input').focus();
 }
 
 function showInfo(title,paragraphs) {
@@ -384,8 +497,8 @@ async function downloadHTML() {
   await saveDraft(false);const result=await api('/api/exports',{document:documentValue()});const a=document.createElement('a');a.href=result.url;a.download='纸间_推文排版.html';a.click();toast('HTML 已生成，包含文章配图与排版');
 }
 
-async function importFile(file) {
-  if(!file)return;if(file.size>35000000)throw new Error('文稿文件超过 35 MB');
+async function parseImportedDraft(file) {
+  if(file.size>35000000)throw new Error('文稿文件超过 35 MB');
   const text=(await file.text()).replace(/^\uFEFF/,'');let doc;
   if(file.name.toLowerCase().endsWith('.json')) {const data=JSON.parse(text);doc=data.document||data;}
   else {
@@ -396,13 +509,14 @@ async function importFile(file) {
     if(!doc.blocks.length)doc.blocks=[{type:'paragraph',text:''}];
   }
   await api('/api/render',{document:doc,preview:true});
-  clearTimeout(saveTimer);
-  if(hasUnsavedChanges())await saveDraft(false);else await saveChain.catch(()=>{});
-  // Only switch after persistence succeeds, and use the server's normalized model.
-  const record=await api('/api/drafts',{id:newDraftId(),document:doc});
-  session={id:record.id,doc:record.document};selected=0;history=[];previewResetRequested=true;
-  fillFields();$('#save-state').textContent='已保存到本机';showView('editor');
-  try{localStorage.setItem('paper-studio.last-draft',record.id);}catch(_){}
+  return doc;
+}
+
+async function importFile(file) {
+  if (!file) return;
+  const opened = await switchDraft(async () => ({id:null,doc:await parseImportedDraft(file)}),
+    '已保存到本机', {saveAsNew:true});
+  if (!opened) return;
   refreshDrafts().catch(error=>toast(error.message,true));
   toast('已导入为一篇新草稿');
 }
@@ -477,6 +591,13 @@ function bind() {
   $('#about-button').onclick=()=>showInfo('纸间使用说明',['已接入 doocs/md 的经典、简洁、优雅三套开源主题，段落间距可统一调整。之前的版式保留在折叠列表中。','“参考推文”可读取公开文章链接或 HTML，提取标题、正文、配色、间距和边框，试排后生成可编辑新稿。动态装饰与 SVG 尚不保证还原。','可编辑栏目名、标题、正文与图片，调整区块顺序；草稿自动保存到本机。AI 辅助排版可生成、对比与继续调整，需先配置模型。秀米自动发送仍在测试。']);
   $('#all-drafts').onclick=()=>showView('drafts');$('#home-bridge').onclick=openExport;$('#export-button').onclick=openExport;
   $('#save-button').onclick=()=>saveDraft().catch(e=>toast(e.message,true));
+  $('#save-conflict-copy').onclick=async event=>{
+    const button=event.currentTarget;
+    button.disabled=true;
+    try { await saveDraft(true,true); }
+    catch (error) { toast(error.message,true); }
+    finally { button.disabled=false; }
+  };
   for(const key of ['title','subtitle','author','column'])$(`#${key}-input`).oninput=(e)=>{remember();session.doc[key]=e.target.value;changed();};
   for(const [selector,key,output] of [['#font-input','fontSize','#font-value'],['#line-input','lineHeight','#line-value']])$(selector).oninput=(e)=>{remember();session.doc[key]=Number(e.target.value);$(output).textContent=key==='fontSize'?`${e.target.value} px`:Number(e.target.value).toFixed(2);changed();};
   $('#spacing-input').oninput=e=>{remember();session.doc.blockSpacing=Number(e.target.value);$('#spacing-value').textContent=Number(e.target.value).toFixed(2);changed();};
@@ -506,14 +627,14 @@ function bind() {
 async function start() {
   try {
     bootstrap=await api('/api/bootstrap');session={id:null,doc:clone(bootstrap.sample)};
+    try{const last=localStorage.getItem('paper-studio.last-draft');if(last&&/^[a-f0-9]{32}$/.test(last)){session=draftSession(await api(`/api/drafts/${last}`));$('#save-state').textContent='已恢复上次草稿';}}catch(_){/* A missing prior draft does not prevent opening the workbench. */}
     buildThemes();bind();bindReference();bindAI();fillFields();await refreshDrafts();
-    try{const last=localStorage.getItem('paper-studio.last-draft');if(last&&/^[a-f0-9]{32}$/.test(last)){const record=await api(`/api/drafts/${last}`);session={id:record.id,doc:record.document};fillFields();$('#save-state').textContent='已恢复上次草稿';}}catch(_){/* A missing prior draft does not prevent opening the workbench. */}
   }catch(error){toast(`工作台未能启动：${error.message}`,true);}
 }
-let referenceRecord=null, referenceBase=null, referencePreviewDoc=null, referenceBusy=false, referencePreviewVersion=0;
+let referenceRecord=null, referenceBase=null, referenceBusy=false, referencePreviewVersion=0;
 
 async function openReference(){
-  referenceBase=documentValue();referencePreviewDoc=null;referenceRecord=null;
+  referenceBase=documentValue();referenceRecord=null;++referencePreviewVersion;
   $('#reference-result').hidden=true;$('#reference-preview-frame').hidden=true;$('#reference-preview-empty').hidden=false;
   $('#reference-status').textContent='';$('#reference-own-text').value='';$('#reference-presentation').value='reference';$('#reference-title-setting').hidden=false;$('#reference-source-canvas').hidden=true;$('#reference-own-canvas').hidden=false;$('#reference-layout-canvases').classList.remove('is-comparing');referenceTab('own');
   $('#reference-dialog').showModal();
@@ -540,9 +661,10 @@ async function previewReference(){
   if(!referenceRecord)return;
   const version=++referencePreviewVersion,doc=referenceDocument();
   const result=await api('/api/render',{document:doc,preview:true});if(version!==referencePreviewVersion)return;
-  referencePreviewDoc=doc;const frame=$('#reference-preview-frame');frame.hidden=false;$('#reference-preview-empty').hidden=true;
+  const frame=$('#reference-preview-frame');frame.hidden=false;$('#reference-preview-empty').hidden=true;
   frame.onload=fitReferenceCanvases;
   frame.srcdoc=referenceFrameHTML(result.html);
+  return doc;
 }
 
 async function showReference(record){
@@ -582,7 +704,7 @@ function referenceTab(mode){
 
 async function readReference(payload){
   if(referenceBusy)return;referenceBusy=true;$('#read-reference').disabled=true;$('#reference-html-button').disabled=true;$('#apply-reference').disabled=true;
-  $('#reference-result').hidden=true;referenceRecord=null;referencePreviewDoc=null;$('#reference-preview-frame').hidden=true;$('#reference-preview-empty').hidden=false;
+  $('#reference-result').hidden=true;referenceRecord=null;++referencePreviewVersion;$('#reference-preview-frame').hidden=true;$('#reference-preview-empty').hidden=false;
   referenceStatus('正在读取文章和可用样式，通常需要几秒钟…');
   try{await showReference(await api('/api/references',payload));}
   catch(error){referenceStatus(error.message+'。可以导入 HTML；截图可放在旁边人工对照。',true);}
@@ -601,8 +723,13 @@ function bindReference(){
   $('#reference-image-file').onchange=()=>{const file=$('#reference-image-file').files[0];if(!file)return;if(!['image/png','image/jpeg','image/webp'].includes(file.type)){referenceStatus('支持 PNG、JPEG 或 WebP 截图',true);return;}if(file.size>8000000){referenceStatus('截图请控制在 8 MB 以内',true);return;}const reader=new FileReader();reader.onload=()=>{$('#reference-board-image').src=reader.result;$('#reference-board').hidden=false;};reader.readAsDataURL(file);};
   $('#reference-refresh').onclick=()=>previewReference().catch(e=>referenceStatus(e.message,true));
   $('#apply-reference').onclick=async()=>{if(!referenceRecord||referenceBusy)return;$('#apply-reference').disabled=true;
-    try{await previewReference();clearTimeout(saveTimer);if((session.revision||0)>(session.savedRevision||0))await saveDraft(false);else await saveChain.catch(()=>{});
-      session={id:null,doc:clone(referencePreviewDoc),revision:1,savedRevision:0};history=[];selected=0;previewResetRequested=true;fillFields();await saveDraft(false);$('#reference-dialog').close();showView('editor');toast('已生成参考排版新稿，原草稿保留');
+    try {
+      const opened = await switchDraft(async () => {
+        const doc = await previewReference();
+        if (doc && $('#reference-dialog').open) return {id:null,doc};
+      }, '已保存到本机', {saveAsNew:true});
+      if (!opened) return;
+      $('#reference-dialog').close();toast('已生成参考排版新稿，原草稿保留');
     }catch(error){referenceStatus(error.message,true);}finally{$('#apply-reference').disabled=false;}
   };
 }

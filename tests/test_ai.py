@@ -144,6 +144,34 @@ class AITests(unittest.TestCase):
                 restarted=self.service(root);model.assert_not_called()
             self.assertEqual(restarted.get(unfinished)['stage'],'interrupted')
 
+    def test_same_request_id_recovers_a_job_without_another_model_request(self):
+        with tempfile.TemporaryDirectory(dir=TEMP) as root:
+            service=self.service(root)
+            service.configure(self.config())
+            release=threading.Event()
+            request_id='b'*32
+
+            def wait_model(*args):
+                release.wait(2)
+                return copy.deepcopy(PLAN), {}
+
+            with patch('paperstudio.ai.request_plan',side_effect=wait_model) as model:
+                try:
+                    queued=service.start(SAMPLE,'采访',request_id)
+                    self.assertEqual(queued['id'],request_id)
+                    self.assertEqual(service.start(SAMPLE,' 采访 ',request_id)['id'],request_id)
+                    with self.assertRaises(AIError) as conflict:
+                        service.start(SAMPLE,'不同的要求',request_id)
+                    self.assertEqual(conflict.exception.code,'request_conflict')
+                finally:
+                    release.set()
+                ready=self.wait_job(service,request_id)
+                self.assertEqual(service.start(SAMPLE,'采访',request_id),ready)
+                restarted=self.service(root)
+                self.assertFalse(restarted.status()['configured'])
+                self.assertEqual(restarted.start(SAMPLE,'采访',request_id),ready)
+                model.assert_called_once()
+
     def test_transport_sends_one_json_request_and_handles_bad_responses(self):
         responses=[];requests=[]
         class Connection:

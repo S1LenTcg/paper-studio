@@ -19,7 +19,7 @@ from urllib.parse import urlsplit
 from . import __version__
 from .bridge import availability, draft_url
 from .document import BUILTIN_IMAGES, SAMPLE, THEMES, normalize, render, standalone
-from .storage import DraftStore, now, valid_id, write_json
+from .storage import DraftConflict, DraftStore, now, valid_id, write_json
 from .reference import ReferenceError, analyze_article, fetch_article
 from .ai import AIError, AIService
 from .standards_service import StandardsService
@@ -305,11 +305,13 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/ai/settings":
                 return self.json(self.app.ai.configure(data))
             if path == "/api/ai/jobs":
-                return self.json(self.app.ai.start(data.get("document"),data.get("requirement")),202)
+                return self.json(self.app.ai.start(data.get("document"), data.get("requirement"),
+                                                   data.get("requestId")), 202)
             if path == "/api/references":
                 return self.json(self.app.read_reference(data), 201)
             if path == "/api/drafts":
-                return self.json(self.app.drafts.save(data.get("document"), data.get("id")))
+                return self.json(self.app.drafts.save(data.get("document"), data.get("id"),
+                                                      data.get("expectedVersion"), data.get("writeId")))
             if path == "/api/exports":
                 return self.json(self.app.export(data.get("document")), 201)
             if path == "/api/xiumi/jobs":
@@ -324,8 +326,11 @@ class Handler(BaseHTTPRequestHandler):
                 (self.app.data / "jobs" / job_id / "cancel.request").touch()
                 return self.json({"requested": True})
             return self.json({"error": "未找到操作"}, 404)
+        except DraftConflict as exc:
+            self.json({"error": str(exc), "code": "draft_conflict"}, 409)
         except (ReferenceError,AIError) as exc:
-            self.json({"error": str(exc), "code": exc.code}, 422)
+            status = 409 if isinstance(exc, AIError) and exc.code == "request_conflict" else 422
+            self.json({"error": str(exc), "code": exc.code}, status)
         except (ValueError, TypeError, KeyError) as exc:
             self.json({"error": str(exc)}, 400)
         except FileNotFoundError:

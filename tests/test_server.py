@@ -5,6 +5,7 @@ import tempfile
 import threading
 import unittest
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
 
@@ -48,9 +49,12 @@ class ServerTests(unittest.TestCase):
 
     def test_ai_unconfigured_and_cross_origin_paths_do_not_start_model(self):
         with patch.object(self.server.app.ai,'start',side_effect=AIError('先配置模型','not_configured')) as start:
-            status,body,_=self.request('POST','/api/ai/jobs',{'document':SAMPLE,'requirement':'采访专刊'})
+            request_id=uuid.uuid4().hex
+            status,body,_=self.request('POST','/api/ai/jobs',{
+                'document':SAMPLE,'requirement':'采访专刊','requestId':request_id,
+            })
             self.assertEqual(status,422);self.assertEqual(json.loads(body)['code'],'not_configured')
-            self.assertEqual(start.call_count,1)
+            start.assert_called_once_with(SAMPLE,'采访专刊',request_id)
             status,_,_=self.request('POST','/api/ai/settings',{'apiKey':'x'},{'Origin':'https://evil.example'})
             self.assertEqual(status,403)
 
@@ -80,10 +84,74 @@ class ServerTests(unittest.TestCase):
         status,body,_=self.request('POST','/api/drafts',{'document':doc})
         self.assertEqual(status,200);record=json.loads(body)
         doc['title']='修改后的标题'
-        status,body,_=self.request('POST','/api/drafts',{'document':doc,'id':record['id']})
-        self.assertEqual(json.loads(body)['id'],record['id'])
+        status,body,_=self.request('POST','/api/drafts',{'document':doc,'id':record['id'],
+                                                       'expectedVersion':record['version']})
+        self.assertEqual(status,200)
+        updated=json.loads(body)
+        self.assertEqual(updated['id'],record['id'])
+        self.assertNotEqual(updated['version'],record['version'])
         status,body,_=self.request('GET','/api/drafts/'+record['id'])
-        self.assertEqual(json.loads(body)['document']['title'],'修改后的标题')
+        self.assertEqual(json.loads(body),updated)
+
+    def test_concurrent_draft_updates_preserve_the_winning_tab_and_allow_a_copy(self):
+        _,body,_=self.request('POST','/api/drafts',{'document':SAMPLE})
+        original=json.loads(body)
+        ready=threading.Barrier(2)
+
+        def save_from_tab(title):
+            ready.wait(timeout=5)
+            status,body,_=self.request('POST','/api/drafts',{
+                'id':original['id'],'expectedVersion':original['version'],
+                'document':{**SAMPLE,'title':title},
+            })
+            return status,json.loads(body),title
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results=sorted(executor.map(save_from_tab,['标签页一','标签页二']),key=lambda result:result[0])
+        (success,winner,_),(conflict,error,losing_title)=results
+        self.assertEqual((success,conflict),(200,409))
+        self.assertEqual(error['code'],'draft_conflict')
+        status,body,_=self.request('POST','/api/drafts',{'document':SAMPLE,'id':original['id']})
+        self.assertEqual(status,409)
+        _,body,_=self.request('GET','/api/drafts/'+original['id'])
+        self.assertEqual(json.loads(body),winner)
+        status,body,_=self.request('POST','/api/drafts',{'document':{**SAMPLE,'title':losing_title}})
+        self.assertEqual(status,200)
+        saved_copy=json.loads(body)
+        self.assertNotEqual(saved_copy['id'],original['id'])
+        self.assertEqual(saved_copy['document']['title'],losing_title)
+
+    def test_draft_save_can_replay_the_last_write_but_cannot_overwrite_a_newer_version(self):
+        first={'id':uuid.uuid4().hex,'writeId':uuid.uuid4().hex,'document':SAMPLE}
+        status,body,_=self.request('POST','/api/drafts',first)
+        self.assertEqual(status,200)
+        created=json.loads(body)
+        replay_status,replay_body,_=self.request('POST','/api/drafts',first)
+        self.assertEqual(replay_status,200)
+        self.assertEqual(json.loads(replay_body),created)
+        update={**first,'expectedVersion':created['version'],'writeId':uuid.uuid4().hex,
+                'document':{**SAMPLE,'title':'新版'}}
+        status,body,_=self.request('POST','/api/drafts',update)
+        self.assertEqual(status,200)
+        replay_status,replay_body,_=self.request('POST','/api/drafts',update)
+        self.assertEqual(replay_status,200)
+        self.assertEqual(json.loads(replay_body),json.loads(body))
+        status,_,_=self.request('POST','/api/drafts',first)
+        self.assertEqual(status,409)
+
+    def test_legacy_draft_can_be_opened_and_updated_with_a_version(self):
+        draft_id=uuid.uuid4().hex
+        path=self.server.app.drafts.root/(draft_id+'.json')
+        write_json(path,{'id':draft_id,'updatedAt':'2026-11-03T00:00:00+00:00','document':SAMPLE})
+        status,body,_=self.request('GET','/api/drafts/'+draft_id)
+        self.assertEqual(status,200)
+        self.assertEqual(json.loads(body)['version'],'legacy')
+        self.assertNotIn('version',json.loads(path.read_text(encoding='utf-8')))
+        status,body,_=self.request('POST','/api/drafts',{
+            'id':draft_id,'expectedVersion':'legacy','document':{**SAMPLE,'title':'更新旧稿'},
+        })
+        self.assertEqual(status,200)
+        self.assertRegex(json.loads(body)['version'],r'^[0-9a-f]{32}$')
 
     def test_export_is_portable_and_downloadable(self):
         status,body,_=self.request('POST','/api/exports',{'document':SAMPLE})

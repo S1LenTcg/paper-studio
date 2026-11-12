@@ -6,6 +6,11 @@
 }
 *{box-sizing:border-box}
 [hidden]{display:none!important}
+.draft-conflict {
+  display:flex;flex:none;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;
+  margin-bottom:12px;padding:10px 14px;border:1px solid #ead7ac;border-radius:6px;
+  background:#fff8e9;color:#69480e;font-size:13px;
+}
 body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.6 var(--sans);-webkit-font-smoothing:antialiased}
 h1,h2,h3,h4,p,figure{margin:0}h1,h2,h3,h4{font-weight:600;line-height:1.4}
 button,input,textarea,select{font:inherit;color:inherit}button,a,input,textarea,select,summary{-webkit-tap-highlight-color:transparent}

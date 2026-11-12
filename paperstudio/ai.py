@@ -154,13 +154,13 @@ def apply_plan(source, plan):
 
 class AIService:
     def __init__(self, root):
-        self.root=root;self.lock=threading.Lock();self.active=None
+        self.root=root;self.lock=threading.RLock();self.active=None
         self.config=safe_config({"baseUrl":os.environ.get("PAPER_AI_BASE_URL","https://api.openai.com/v1"),"model":os.environ.get("PAPER_AI_MODEL",""),"apiKey":os.environ.get("PAPER_AI_API_KEY","")})
         # A restart never silently re-sends a billable request.
         for path in self.root.glob("*/status.json"):
             try:
                 record=json.loads(path.read_text(encoding="utf-8"))
-                if record.get("stage") in {"queued","generating"}:record.update(stage="interrupted",error="服务已重启，本次请求没有自动重试",updatedAt=now());write_json(path,record)
+                if isinstance(record, dict) and record.get("stage") in {"queued","generating"}:record.update(stage="interrupted",error="服务已重启，本次请求没有自动重试",updatedAt=now());write_json(path,record)
             except (OSError,ValueError):continue
 
     def status(self):
@@ -173,33 +173,57 @@ class AIService:
 
     def get(self,job_id):
         if not valid_id(job_id):raise AIError("AI 任务编号无效", "invalid_job")
-        return json.loads((self.root/job_id/"status.json").read_text(encoding="utf-8"))
+        with self.lock:
+            return json.loads((self.root/job_id/"status.json").read_text(encoding="utf-8"))
 
-    def start(self,document,requirement):
+    def start(self,document,requirement,request_id=None):
         doc=normalize(document)
         if not isinstance(requirement,str) or not 1<=len(requirement.strip())<=1500:raise AIError("请填写 1–1500 字的排版要求", "input")
         if sum(len(b["text"]) for b in doc["blocks"])+len(doc["title"])+len(doc["subtitle"])>MAX_ARTICLE:raise AIError("第一版每次支持最多 12,000 字的稿件", "input")
+        if request_id is not None and not valid_id(request_id):
+            raise AIError("AI 请求编号无效", "invalid_request")
+        requirement = requirement.strip()
+        job_id = request_id or uuid.uuid4().hex
+        path = self.root / job_id / "status.json"
         with self.lock:
+            if request_id is not None:
+                try:
+                    existing = self.get(job_id)
+                except FileNotFoundError:
+                    pass
+                else:
+                    if (isinstance(existing, dict) and existing.get("source") == doc
+                            and existing.get("requirement") == requirement):
+                        return existing
+                    raise AIError("此请求编号已用于另一份排版任务，请恢复原任务。", "request_conflict")
             if not self.config["apiKey"] or not self.config["model"]:raise AIError("请先配置模型地址、模型名和 API Key", "not_configured")
             if self.active:raise AIError("已有 AI 排版正在生成，请先等待完成", "busy")
-            job_id=uuid.uuid4().hex;self.active=job_id;config=copy.deepcopy(self.config)
-            record={"id":job_id,"stage":"queued","createdAt":now(),"updatedAt":now(),"model":config["model"],"host":urlsplit(config["baseUrl"]).hostname,"source":doc,"requirement":requirement.strip()}
-            try:write_json(self.root/job_id/"status.json",record)
-            except OSError:self.active=None;raise
-        threading.Thread(target=self._run,args=(job_id,config,doc,requirement.strip()),daemon=True).start()
+            config=copy.deepcopy(self.config)
+            record={"id":job_id,"stage":"queued","createdAt":now(),"updatedAt":now(),"model":config["model"],"host":urlsplit(config["baseUrl"]).hostname,"source":doc,"requirement":requirement}
+            write_json(path,record)
+            self.active=job_id
+            try:
+                threading.Thread(target=self._run,args=(job_id,config,doc,requirement),daemon=True).start()
+            except RuntimeError:
+                self.active=None
+                record.update(stage="failed", error="本地任务未能启动，请重新生成。", code="local", updatedAt=now())
+                write_json(path,record)
         return record
 
     def _run(self,job_id,config,doc,requirement):
         record=self.get(job_id);path=self.root/job_id/"status.json"
         try:
-            record.update(stage="generating",updatedAt=now());write_json(path,record)
+            record.update(stage="generating",updatedAt=now())
+            with self.lock:
+                write_json(path,record)
             plan,usage=request_plan(config,doc,requirement)
             result,checks,notes=apply_plan(doc,plan)
             record.update(stage="ready",updatedAt=now(),document=result,checks=checks,notes=notes,usage=usage)
         except (AIError,ReferenceError) as exc:record.update(stage="failed",error=str(exc),code=exc.code,updatedAt=now())
         except Exception:record.update(stage="failed",error="本地方案处理失败，没有修改原稿，也没有自动重试",code="local",updatedAt=now())
         finally:
-            try:write_json(path,record)
-            finally:
-                with self.lock:
+            with self.lock:
+                try:
+                    write_json(path,record)
+                finally:
                     if self.active==job_id:self.active=None
