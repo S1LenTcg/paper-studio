@@ -19,7 +19,7 @@ from urllib.parse import urlsplit
 from . import __version__
 from .bridge import availability, draft_url
 from .document import BUILTIN_IMAGES, SAMPLE, THEMES, normalize, render, standalone
-from .storage import DraftConflict, DraftStore, now, valid_id, write_json
+from .storage import DraftConflict, DraftStore, DraftTooLarge, now, valid_id, write_json
 from .reference import ReferenceError, analyze_article, fetch_article
 from .ai import AIError, AIService
 from .standards_service import StandardsService
@@ -245,7 +245,9 @@ class Handler(BaseHTTPRequestHandler):
             if path.startswith("/api/ai/jobs/"):
                 return self.json(self.app.ai.get(path.rsplit("/",1)[1]))
             if path == "/api/bootstrap":
-                return self.json({"sample": {**SAMPLE, "theme": "doocs-classic", "blockSpacing": .65}, "themes": THEMES, "bridge": availability(), "drafts": self.app.drafts.list(), "references": self.app.reference_list()})
+                return self.json({"sample": {**SAMPLE, "theme": "doocs-classic", "blockSpacing": .65},
+                                  "themes": THEMES, "bridge": availability(), "drafts": self.app.drafts.list(),
+                                  "references": self.app.reference_list(), "maxRequestBytes": MAX_REQUEST})
             if path == "/api/references":
                 return self.json(self.app.reference_list())
             if path.startswith("/api/references/"):
@@ -311,7 +313,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.json(self.app.read_reference(data), 201)
             if path == "/api/drafts":
                 return self.json(self.app.drafts.save(data.get("document"), data.get("id"),
-                                                      data.get("expectedVersion"), data.get("writeId")))
+                                                      data.get("expectedVersion"), data.get("writeId"),
+                                                      max_request_bytes=MAX_REQUEST))
             if path == "/api/exports":
                 return self.json(self.app.export(data.get("document")), 201)
             if path == "/api/xiumi/jobs":
@@ -328,6 +331,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.json({"error": "未找到操作"}, 404)
         except DraftConflict as exc:
             self.json({"error": str(exc), "code": "draft_conflict"}, 409)
+        except DraftTooLarge:
+            self.json({"error": f"整篇文稿超过 {MAX_REQUEST / 1_000_000:g} MB 上限，请压缩或减少配图后再试。"}, 413)
         except (ReferenceError,AIError) as exc:
             status = 409 if isinstance(exc, AIError) and exc.code == "request_conflict" else 422
             self.json({"error": str(exc), "code": exc.code}, status)

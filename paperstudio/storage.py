@@ -30,12 +30,31 @@ class DraftConflict(Exception):
     pass
 
 
+class DraftTooLarge(Exception):
+    pass
+
+
 class DraftStore:
     def __init__(self, root):
         self.root = Path(root)
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()
+        self.summaries = {}
 
-    def save(self, document, draft_id=None, expected_version=None, write_id=None):
+    @staticmethod
+    def _file_stamp(path):
+        info = path.stat()
+        return (info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+    @staticmethod
+    def _summary(record):
+        document = record["document"]
+        updated, title, theme = record.get("updatedAt"), document.get("title"), document.get("theme")
+        if not all(isinstance(value, str) for value in (updated, title, theme)):
+            return None
+        return {"id": record["id"], "title": title, "theme": theme,
+                "reference": bool(document.get("referenceStyle")), "updatedAt": updated}
+
+    def save(self, document, draft_id=None, expected_version=None, write_id=None, *, max_request_bytes=None):
         document = normalize(document)
         if draft_id is not None and not valid_id(draft_id):
             raise ValueError("草稿编号无效")
@@ -44,6 +63,12 @@ class DraftStore:
         if write_id is not None and not valid_id(write_id):
             raise ValueError("保存编号无效")
         draft_id = draft_id or uuid.uuid4().hex
+        if expected_version is None and max_request_bytes is not None:
+            # A new/imported draft must also fit a later save after normalization.
+            payload = {"id": draft_id, "expectedVersion": draft_id, "writeId": draft_id, "document": document}
+            body = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+            if len(body.encode("utf-8")) > max_request_bytes:
+                raise DraftTooLarge()
         path = self.root / f"{draft_id}.json"
         with self.lock:
             try:
@@ -60,12 +85,18 @@ class DraftStore:
             record = {"id": draft_id, "version": write_id or uuid.uuid4().hex,
                       "updatedAt": now(), "document": document}
             write_json(path, record)
+            try:
+                self.summaries[draft_id] = (self._file_stamp(path), self._summary(record))
+            except OSError:
+                # The write succeeded. A later list can rebuild the summary.
+                self.summaries.pop(draft_id, None)
         return record
 
     def get(self, draft_id):
         if not valid_id(draft_id):
             raise ValueError("草稿编号无效")
-        record = json.loads((self.root / f"{draft_id}.json").read_text(encoding="utf-8"))
+        with self.lock:
+            record = json.loads((self.root / f"{draft_id}.json").read_text(encoding="utf-8"))
         if not isinstance(record, dict) or record.get("id") != draft_id or not isinstance(record.get("document"), dict):
             raise ValueError("草稿文件格式无效")
         if "version" in record and not valid_id(record["version"]):
@@ -76,16 +107,26 @@ class DraftStore:
 
     def list(self):
         result = []
-        for path in self.root.glob("*.json"):
-            try:
-                r = json.loads(path.read_text(encoding="utf-8"))
-                if not isinstance(r, dict) or not isinstance(r.get("document"), dict):
+        with self.lock:
+            summaries = {}
+            for path in self.root.glob("*.json"):
+                draft_id = path.stem
+                if not valid_id(draft_id):
                     continue
-                if not valid_id(r.get("id")) or r["id"] != path.stem:
+                try:
+                    stamp = self._file_stamp(path)
+                    cached = self.summaries.get(draft_id)
+                    if cached is not None and cached[0] == stamp:
+                        summary = cached[1]
+                    else:
+                        try:
+                            summary = self._summary(self.get(draft_id))
+                        except ValueError:
+                            summary = None
+                except OSError:
                     continue
-                if not all(isinstance(value, str) for value in (r.get("updatedAt"), r["document"].get("title"), r["document"].get("theme"))):
-                    continue
-                result.append({"id": r["id"], "title": r["document"]["title"], "theme": r["document"]["theme"], "reference": bool(r["document"].get("referenceStyle")), "updatedAt": r["updatedAt"]})
-            except (ValueError, KeyError, OSError):
-                continue
+                summaries[draft_id] = (stamp, summary)
+                if summary is not None:
+                    result.append(summary.copy())
+            self.summaries = summaries
         return sorted(result, key=lambda r: r["updatedAt"], reverse=True)

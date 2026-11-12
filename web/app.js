@@ -14,10 +14,37 @@ let renderVersion = 0, saveChain = Promise.resolve(), activeJob = null, jobTimer
 let draftSwitchVersion = 0;
 let previewResetRequested = false, articleResizeObserver = null;
 let viewedXiumiJob = null, xiumiVersion = 0, xiumiSending = false, xiumiRequest = null, xiumiRetryAllowed = false;
-let draftCache = [];
+let draftCache = [], draftListVersion = 0;
+
+function requestByteLimit() {
+  return bootstrap?.maxRequestBytes ?? 35_000_000;
+}
+
+function ensureRequestFits(body, isDraft=false) {
+  const limit = requestByteLimit();
+  // UTF-8 uses at most three bytes per UTF-16 code unit. Skip encoding small requests.
+  if (body.length > limit || (body.length * 3 > limit && new TextEncoder().encode(body).length > limit)) {
+    const size = `${limit / 1_000_000} MB`;
+    const message = isDraft
+      ? `整篇文稿超过 ${size} 上限，请压缩图片、换用较小图片或减少配图后再试。`
+      : `请求超过 ${size} 上限，请缩小内容后再试。`;
+    throw Object.assign(new Error(message), {status:413});
+  }
+}
+
+function ensureDraftFits(document) {
+  // Include the identifiers that will be added when saving a draft.
+  const id = '0'.repeat(32);
+  ensureRequestFits(JSON.stringify({id,expectedVersion:id,writeId:id,document}), true);
+}
 
 async function api(path, data) {
-  const options = data === undefined ? {} : {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data)};
+  let options = {};
+  if (data !== undefined) {
+    const body = JSON.stringify(data);
+    ensureRequestFits(body, data?.document !== undefined);
+    options = {method:'POST', headers:{'Content-Type':'application/json'}, body};
+  }
   const response = await fetch(path, options);
   const value = await response.json();
   if (!response.ok) {
@@ -34,8 +61,8 @@ function toast(message, error=false) {
   toastTimer = setTimeout(() => { $('#toast').hidden=true; }, error ? 6500 : 3200);
 }
 
-function documentValue() {
-  const doc = clone(session.doc);
+function documentValue(document=session.doc) {
+  const doc = clone(document);
   doc.title = doc.title.trim() || '未命名推文';
   return doc;
 }
@@ -110,6 +137,7 @@ async function persistDraftWrite(owner) {
   owner.savedRevision = revision;
   owner.conflict = null;
   if (session === owner) rememberDraftId(record.id);
+  rememberDraftSummary(record);
   return record;
 }
 
@@ -145,15 +173,13 @@ async function saveDraft(notify=true, asCopy=false) {
         owner.conflict = error;
         if (session === owner) clearTimeout(saveTimer);
       }
-      draftSaveStatus(owner, owner.conflict ? '保存冲突 · 本页有未保存的修改' : '未保存 · 请重试保存');
+      draftSaveStatus(owner, owner.conflict ? '保存冲突 · 本页有未保存的修改'
+        : error.status === 413 ? '未保存 · 文稿超出容量上限' : '未保存 · 请重试保存');
       throw error;
     }
   });
   const result = await saveChain;
   if (notify) toast(asCopy ? '当前编辑已另存为副本' : '草稿已保存到这台电脑');
-  if (!result) return;
-  try { await refreshDrafts(); }
-  catch (_) { toast('稿件已保存，但草稿列表刷新失败，请稍后重新打开列表',true); }
   return result;
 }
 
@@ -168,7 +194,10 @@ function showView(name) {
   const names = {home:'创作首页', editor:'排版工作台', drafts:'我的草稿'};
   $('#breadcrumb').textContent = `工作空间 / ${names[name]}`;
   if (name === 'editor') updatePreview();
-  if (name === 'home' || name === 'drafts') refreshDrafts().catch(e => toast(e.message,true));
+  if (name === 'home' || name === 'drafts') {
+    renderDrafts();
+    refreshDrafts().catch(e => toast(e.message,true));
+  }
   window.scrollTo({top:0});
 }
 
@@ -261,9 +290,10 @@ function renderBlockEditor() {
       owner.imageReads ??= new Set();
       owner.imageReads.add(reading);
       reader.onload = () => {
-        if (session !== owner || !owner.doc.blocks.includes(block)) return;
-        remember();block.src=reader.result;renderBlockEditor();changed();
+        try { replaceDraftImage(owner, block, reader.result); }
+        catch (error) { toast(error.message,true); }
       };
+      reader.onerror = () => toast('无法读取图片，请重新选择。',true);
       try {
         reader.readAsDataURL(file);
         await reading;
@@ -277,6 +307,35 @@ function renderBlockEditor() {
     const textarea=document.createElement('textarea');textarea.value=block.text;textarea.maxLength=20000;textarea.setAttribute('aria-label',block.type==='image'?'图片说明':'区块内容');textarea.placeholder=block.type==='image'?'为这张图片写一句说明…':'在这里写下内容…';
     textarea.addEventListener('input',()=>{remember();block.text=textarea.value;const item=$$('#block-list .block-item b')[selected];if(item)item.textContent=block.text.split('\n')[0]||labels[block.type];changed();});container.append(textarea);
   } else {const p=document.createElement('p');p.className='muted';p.textContent='分隔线。可以移动，也可以删除。';container.append(p);}
+}
+
+function replaceDraftImage(owner, block, src) {
+  if (session !== owner) return;
+  const index = owner.doc.blocks.indexOf(block);
+  if (index === -1) return;
+  const candidate = documentValue();
+  candidate.blocks[index].src = src;
+  ensureDraftFits(candidate);
+  remember();
+  block.src = src;
+  renderBlockEditor();
+  changed();
+}
+
+function addBlock(type) {
+  if (session.doc.blocks.length >= 180) throw new Error('最多支持 180 个区块');
+  const block = {type,text:type === 'heading' ? '新的小标题' : ''};
+  if (type === 'image') {
+    block.src = '/assets/sample.png';
+    const candidate = documentValue();
+    candidate.blocks.splice(selected+1,0,block);
+    ensureDraftFits(candidate);
+  }
+  remember();
+  session.doc.blocks.splice(selected+1,0,block);
+  selected++;
+  renderBlocks();
+  changed();
 }
 
 function moveBlock(direction) {
@@ -324,11 +383,25 @@ async function compareThemes() {
 }
 
 async function refreshDrafts() {
-  draftCache=await api('/api/drafts'); $('#draft-count').textContent=String(draftCache.length);
+  const version = ++draftListVersion;
+  const drafts = await api('/api/drafts');
+  if (version !== draftListVersion) return;
+  draftCache = drafts;
+  renderDrafts();
+}
+
+function rememberDraftSummary(record) {
+  const {id, updatedAt, document} = record;
+  ++draftListVersion;
+  const summary = {id, updatedAt, title:document.title, theme:document.theme, reference:!!document.referenceStyle};
+  draftCache = [summary, ...draftCache.filter(draft => draft.id !== id)];
+  draftCache.sort((a,b) => b.updatedAt.localeCompare(a.updatedAt));
   renderDrafts();
 }
 
 function renderDrafts() {
+  $('#draft-count').textContent = String(draftCache.length);
+  if (!$('#editor-view').hidden) return;
   const query=$('#draft-search').value.trim().toLocaleLowerCase();
   const filtered=draftCache.filter(d=>d.title.toLocaleLowerCase().includes(query));
   $('#draft-total').textContent=query?`${filtered.length} / ${draftCache.length}`:`${draftCache.length} 篇`;
@@ -362,7 +435,9 @@ async function switchDraft(prepare, status, {saveAsNew=false, beforeDisplay}={})
         continue;
       }
       if (!saveAsNew) break;
-      next = draftSession(await api('/api/drafts', {id:newDraftId(), document:next.doc}));
+      const record = await api('/api/drafts', {id:newDraftId(), document:next.doc});
+      rememberDraftSummary(record);
+      next = draftSession(record);
       saveAsNew = false;
       // Save any edits made to the original while the new draft was being written.
     }
@@ -498,7 +573,8 @@ async function downloadHTML() {
 }
 
 async function parseImportedDraft(file) {
-  if(file.size>35000000)throw new Error('文稿文件超过 35 MB');
+  const limit = requestByteLimit();
+  if (file.size > limit) throw new Error(`文稿文件超过 ${limit / 1_000_000} MB，请缩小文件后再导入。`);
   const text=(await file.text()).replace(/^\uFEFF/,'');let doc;
   if(file.name.toLowerCase().endsWith('.json')) {const data=JSON.parse(text);doc=data.document||data;}
   else {
@@ -508,6 +584,7 @@ async function parseImportedDraft(file) {
     for(const line of lines){if(/^#{1,3} /.test(line)){flush();doc.blocks.push({type:'heading',text:line.replace(/^#{1,3} /,'')});}else if(line.startsWith('> ')){flush();doc.blocks.push({type:'quote',text:line.slice(2)});}else if(!line.trim()){flush();}else{paragraph.push(line);}}flush();
     if(!doc.blocks.length)doc.blocks=[{type:'paragraph',text:''}];
   }
+  ensureDraftFits(doc);
   await api('/api/render',{document:doc,preview:true});
   return doc;
 }
@@ -517,7 +594,6 @@ async function importFile(file) {
   const opened = await switchDraft(async () => ({id:null,doc:await parseImportedDraft(file)}),
     '已保存到本机', {saveAsNew:true});
   if (!opened) return;
-  refreshDrafts().catch(error=>toast(error.message,true));
   toast('已导入为一篇新草稿');
 }
 
@@ -602,7 +678,10 @@ function bind() {
   for(const [selector,key,output] of [['#font-input','fontSize','#font-value'],['#line-input','lineHeight','#line-value']])$(selector).oninput=(e)=>{remember();session.doc[key]=Number(e.target.value);$(output).textContent=key==='fontSize'?`${e.target.value} px`:Number(e.target.value).toFixed(2);changed();};
   $('#spacing-input').oninput=e=>{remember();session.doc.blockSpacing=Number(e.target.value);$('#spacing-value').textContent=Number(e.target.value).toFixed(2);changed();};
   $('#undo-button').onclick=()=>{if(!history.length){toast('没有可以撤销的修改');return;}session.doc=history.pop();selected=Math.min(selected,session.doc.blocks.length-1);fillFields();changed();$('#undo-button').disabled=!history.length;};
-  $('#add-block').onclick=()=>{if(session.doc.blocks.length>=180){toast('最多支持 180 个区块',true);return;}remember();const type=$('#new-block-type').value;const block={type,text:type==='heading'?'新的小标题':''};if(type==='image')block.src='/assets/sample.png';session.doc.blocks.splice(selected+1,0,block);selected++;renderBlocks();changed();};
+  $('#add-block').onclick=()=>{
+    try { addBlock($('#new-block-type').value); }
+    catch (error) { toast(error.message,true); }
+  };
   $$('.width-buttons button').forEach(b=>b.onclick=()=>{$$('.width-buttons button').forEach(x=>x.classList.toggle('selected',x===b));$('#article-preview').style.width=`min(${b.dataset.width}px,100%)`;});
   $('#import-button').onclick=()=>$('#import-file').click();$('#import-file').onchange=()=>{importFile($('#import-file').files[0]).catch(e=>toast(e.message,true));$('#import-file').value='';};
   $$('[data-close]').forEach(b=>b.onclick=()=>b.closest('dialog').close());
@@ -627,8 +706,9 @@ function bind() {
 async function start() {
   try {
     bootstrap=await api('/api/bootstrap');session={id:null,doc:clone(bootstrap.sample)};
+    draftCache = bootstrap.drafts;
     try{const last=localStorage.getItem('paper-studio.last-draft');if(last&&/^[a-f0-9]{32}$/.test(last)){session=draftSession(await api(`/api/drafts/${last}`));$('#save-state').textContent='已恢复上次草稿';}}catch(_){/* A missing prior draft does not prevent opening the workbench. */}
-    buildThemes();bind();bindReference();bindAI();fillFields();await refreshDrafts();
+    buildThemes();bind();bindReference();bindAI();fillFields();renderDrafts();
   }catch(error){toast(`工作台未能启动：${error.message}`,true);}
 }
 let referenceRecord=null, referenceBase=null, referenceBusy=false, referencePreviewVersion=0;

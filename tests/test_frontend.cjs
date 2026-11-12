@@ -45,14 +45,15 @@ function editorHarness(handler=async()=>({}),stored=new Map()) {
     addEventListener(name,fn){events.set(name,fn);}};
   const context=vm.createContext({document,crypto:require('node:crypto').webcrypto,
     window:{addEventListener(name,fn){events.set(name,fn);}},
-    localStorage:{getItem:key=>stored.get(key)??null,setItem:(key,value)=>stored.set(key,value)},setTimeout(){},clearTimeout(){}});
+    localStorage:{getItem:key=>stored.get(key)??null,setItem:(key,value)=>stored.set(key,value)},TextEncoder,setTimeout(){},clearTimeout(){}});
   const source=fs.readFileSync(path.join(__dirname,'../web/app.js'),'utf8').replace(/\nstart\(\);\s*$/,'');
   vm.runInContext(source+`
     bootstrap={themes:{editorial:{name:'测试模板'}}};
     session={id:null,doc:{title:'原稿',blocks:[{type:'paragraph',text:'原文'}]},revision:1,savedRevision:0};
-    renderBlocks=()=>{};showView=()=>{};refreshDrafts=async()=>{};toast=()=>{};
+    renderBlocks=()=>{};renderBlockEditor=()=>{};showView=()=>{};toast=()=>{};
     globalThis.controls={state:()=>session,open:record=>{session=draftSession(record);},
       edit:text=>{session.doc.blocks[0].text=text;session.revision=(session.revision||0)+1;},
+      limit:bytes=>{bootstrap.maxRequestBytes=bytes;},drafts:()=>draftCache,
       clone,bindSaveLifecycle:()=>bindSaveLifecycle()};
   `,context);
   context.api=async(route,data)=>{calls.push({route,data});return handler(route,data);};
@@ -60,7 +61,7 @@ function editorHarness(handler=async()=>({}),stored=new Map()) {
 }
 
 function savedDraft(data) {
-  return {id:data.id,version:data.writeId,document:data.document};
+  return {id:data.id,version:data.writeId,updatedAt:'2026-11-12T00:00:00+00:00',document:data.document};
 }
 
 function draftRecord(id, title) {
@@ -132,11 +133,69 @@ test('reselecting the current draft cannot replace edits saved during the select
 test('minimal JSON import uses normalized fields returned by the server',async()=>{
   const normalized={title:'导入稿',theme:'editorial',fontSize:15,lineHeight:1.95,blockSpacing:.65,
     subtitle:'',author:'',column:'',blocks:[{type:'paragraph',text:''}]};
-  const h=editorHarness(async(route,data)=>({id:data?.id||'b'.repeat(32),version:'a'.repeat(32),document:normalized}));
+  const h=editorHarness(async(route,data)=>({...savedDraft(data),version:'a'.repeat(32),document:normalized}));
   await h.context.importFile({name:'minimal.json',size:100,text:async()=>JSON.stringify({title:'导入稿',blocks:[{type:'paragraph'}]})});
   assert.equal(h.context.controls.state().doc.theme,'editorial');
   assert.equal(h.context.controls.state().doc.blocks[0].text,'');
   assert.equal(h.nodes.get('#save-state').textContent,'已保存到本机');
+});
+
+function draftRequestSize(document) {
+  const id='0'.repeat(32);
+  return Buffer.byteLength(JSON.stringify({id,expectedVersion:id,writeId:id,document}));
+}
+
+test('adding or replacing an image checks the entire draft and preserves the original on rejection',()=>{
+  const h=editorHarness();
+  const record=draftRecord('original','配图稿');
+  const small='data:image/png;base64,'+'A'.repeat(32);
+  const large='data:image/png;base64,'+'A'.repeat(256);
+  record.document.blocks=[{type:'image',text:'一',src:small},{type:'image',text:'二',src:large}];
+  h.context.controls.open(record);
+  const owner=h.context.controls.state(), block=owner.doc.blocks[0];
+  h.context.controls.limit(draftRequestSize(owner.doc));
+  assert.throws(()=>h.context.addBlock('image'),/压缩图片/);
+  assert.throws(()=>h.context.replaceDraftImage(owner,block,large),/压缩图片/);
+  assert.equal(owner.doc.blocks.length,2);
+  assert.equal(block.src,small);
+  assert.equal(owner.revision,undefined);
+  h.context.replaceDraftImage(owner,owner.doc.blocks[1],small);
+  h.context.addBlock('image');
+  assert.equal(owner.doc.blocks.length,3);
+  assert.equal(owner.revision,2);
+});
+
+test('import counts UTF-8 bytes and save identifiers before previewing or creating a draft',async()=>{
+  const h=editorHarness();
+  const original=h.context.controls.state();
+  const document={title:'多图稿',blocks:[{type:'paragraph',text:'正文'.repeat(55)}]};
+  const text=JSON.stringify(document);
+  const limit=draftRequestSize(document)-1;
+  assert.ok(text.length<Buffer.byteLength(text));
+  assert.ok(Buffer.byteLength(text)<limit);
+  h.context.controls.limit(limit);
+  await assert.rejects(h.context.importFile({name:'oversize.json',size:Buffer.byteLength(text),text:async()=>text}),/整篇文稿超过/);
+  assert.equal(h.context.controls.state(),original);
+  assert.equal(h.calls.length,0);
+});
+
+test('saving updates the summary locally and a slow list response cannot roll it back',async()=>{
+  let finishList;
+  const h=editorHarness((route,data)=>data
+    ? savedDraft(data)
+    : new Promise(resolve=>{finishList=resolve;}));
+  const loading=h.context.refreshDrafts();
+  const saved=await h.context.saveDraft(false);
+  finishList([{id:saved.id,title:'旧的列表标题',updatedAt:saved.updatedAt}]);
+  await loading;
+  assert.deepEqual(h.calls.map(call=>[call.route,!!call.data]),[
+    ['/api/drafts',false],['/api/drafts',true],
+  ]);
+  const items=h.context.controls.drafts();
+  assert.equal(items.length,1);
+  assert.equal(items[0].title,'原稿');
+  assert.equal(items[0].document,undefined);
+  assert.equal(h.nodes.get('#draft-count').textContent,'1');
 });
 
 test('failed JSON import leaves the previous article selected',async()=>{

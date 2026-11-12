@@ -163,6 +163,41 @@ class ServerTests(unittest.TestCase):
         self.assertNotIn(b'/assets/sample.png',body)
         self.assertNotIn(b'/assets/auditorium.jpg',body)
 
+    def test_normalized_import_over_capacity_is_not_created(self):
+        draft_id=uuid.uuid4().hex
+        request={'id':draft_id,'document':{'title':'Import','blocks':[{'type':'paragraph'}]}}
+        limit=len(json.dumps(request).encode('utf-8'))+1
+        with patch('paperstudio.server.MAX_REQUEST',limit):
+            status,body,_=self.request('POST','/api/drafts',request)
+        self.assertEqual(status,413)
+        self.assertIn('整篇文稿',json.loads(body)['error'])
+        self.assertFalse((self.server.app.drafts.root/(draft_id+'.json')).exists())
+
+    def test_multiple_images_save_reopen_preview_and_export(self):
+        png='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jR9sAAAAASUVORK5CYII='
+        doc={**SAMPLE,'blocks':[
+            {'type':'image','text':'封面','src':'/assets/auditorium.jpg'},
+            {'type':'image','text':'内文配图','src':png},
+        ]}
+        status,body,_=self.request('POST','/api/drafts',{'document':doc})
+        self.assertEqual(status,200)
+        record=json.loads(body)
+        status,body,_=self.request('GET','/api/drafts/'+record['id'])
+        self.assertEqual(status,200)
+        reopened=json.loads(body)['document']
+        self.assertEqual(reopened['blocks'],doc['blocks'])
+        status,body,_=self.request('POST','/api/render',{'document':reopened,'preview':True})
+        self.assertEqual(status,200)
+        self.assertIn('/assets/auditorium.jpg',json.loads(body)['html'])
+        self.assertIn(png,json.loads(body)['html'])
+        status,body,_=self.request('POST','/api/exports',{'document':reopened})
+        self.assertEqual(status,201)
+        status,body,_=self.request('GET',json.loads(body)['url'])
+        self.assertEqual(status,200)
+        self.assertNotIn(b'/assets/auditorium.jpg',body)
+        self.assertIn(b'data:image/jpeg;base64,',body)
+        self.assertIn(png.encode(),body)
+
     def test_preview_reuses_local_images_but_copy_html_stays_portable(self):
         status,body,_=self.request('POST','/api/render',{'document':SAMPLE,'preview':True})
         self.assertEqual(status,200)
@@ -188,6 +223,36 @@ class ServerTests(unittest.TestCase):
             for value in [None,[],{'document':None},{'id':'bad','updatedAt':2,'document':{'title':[],'theme':{}}}]:
                 write_json(Path(tmp)/(uuid.uuid4().hex+'.json'),value)
             self.assertEqual([r['id'] for r in store.list()],[good['id']])
+
+    def test_draft_list_reuses_summaries_and_notices_changes_and_deletions(self):
+        with tempfile.TemporaryDirectory(dir=TEST_TMP) as tmp:
+            legacy_id=uuid.uuid4().hex
+            legacy_path=Path(tmp)/(legacy_id+'.json')
+            legacy={'id':legacy_id,'updatedAt':'2026-11-03T00:00:00+00:00','document':SAMPLE}
+            write_json(legacy_path,legacy)
+            store=DraftStore(tmp)
+            saved=store.save(SAMPLE)
+            with patch.object(store,'get',wraps=store.get) as read:
+                items=store.list()
+                read.assert_called_once_with(legacy_id)
+                self.assertEqual([item['id'] for item in items],[saved['id'],legacy_id])
+                items[0]['title']='外部修改返回值'
+                read.reset_mock()
+                self.assertEqual(store.list()[0]['title'],SAMPLE['title'])
+                read.assert_not_called()
+
+                store.save({**SAMPLE,'title':'新标题'},saved['id'],saved['version'])
+                read.reset_mock()
+                self.assertEqual(store.list()[0]['title'],'新标题')
+                read.assert_not_called()
+
+                write_json(legacy_path,{'broken':True})
+                self.assertEqual(len(store.list()),1)
+                read.assert_called_once_with(legacy_id)
+                write_json(legacy_path,{**legacy,'document':{**SAMPLE,'title':'修复旧稿'}})
+                self.assertEqual(store.list()[1]['title'],'修复旧稿')
+                legacy_path.unlink()
+                self.assertEqual(len(store.list()),1)
 
     def test_existing_png_drafts_still_export_original_image(self):
         doc=copy.deepcopy(SAMPLE);doc['blocks'][1]['src']='/assets/sample.png'
